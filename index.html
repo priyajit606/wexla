@@ -84,11 +84,13 @@
         </div>
 
         <section class="section-block">
-          <div class="section-title"><div><span class="eyebrow">SERVICES</span><h3>Premium creation protocols</h3></div><span class="section-count">03 MACROS</span></div>
+          <div class="section-title"><div><span class="eyebrow">SERVICES</span><h3>Premium creation protocols</h3></div><span class="section-count">05 MACROS</span></div>
           <div class="service-grid">
             <article class="service-card glass" data-service="Making Website"><div class="service-icon">⌘</div><span>01 / WEB</span><h4>Making Website</h4><p>Landing pages, portfolios, dashboards and modern web experiences.</p><button class="text-btn">OPEN BRIEF →</button></article>
             <article class="service-card glass" data-service="Making PPT"><div class="service-icon">▤</div><span>02 / DECK</span><h4>Making PPT</h4><p>Presentation systems designed for clarity, impact and storytelling.</p><button class="text-btn">OPEN BRIEF →</button></article>
             <article class="service-card glass" data-service="Video Editing"><div class="service-icon">▶</div><span>03 / VIDEO</span><h4>Video Editing</h4><p>Short-form edits, gaming videos, reels and cinematic social content.</p><button class="text-btn">OPEN BRIEF →</button></article>
+            <article class="service-card glass" data-service="Making Apps"><div class="service-icon">▣</div><span>04 / APP</span><h4>Making Apps</h4><p>Mobile and desktop app concepts, interfaces, prototypes and builds.</p><button class="text-btn">OPEN BRIEF →</button></article>
+            <article class="service-card glass" data-service="Making 2D Games"><div class="service-icon">✦</div><span>05 / 2D GAME</span><h4>Making 2D Games</h4><p>Custom 2D game concepts, mechanics, UI, levels and playable builds.</p><button class="text-btn">OPEN BRIEF →</button></article>
           </div>
         </section>
 
@@ -131,13 +133,15 @@
 
   <div id="serviceModal" class="modal">
     <div class="modal-card glass"><button class="modal-close" data-close-modal>×</button><span class="eyebrow">NEW CLIENT BRIEF</span><h2 id="serviceTitle">Making Website</h2><p>Transmit requirements to your local mission queue.</p>
-      <form id="serviceForm"><label>CONTACT NO<input id="servicePhone" required type="tel"></label><label>EMAIL<input id="serviceEmail" required type="email"></label><label>WORK DESCRIPTION<textarea id="serviceDesc" required placeholder="Describe the work, deliverables and deadline..."></textarea></label><label>TARGET BUDGET OFFER<input id="serviceBudget" required type="number" min="50" max="10000" step="50"></label><div id="serviceError" class="form-error"></div><button class="neon-btn wide" type="submit">TRANSMIT BRIEF →</button></form>
+      <form id="serviceForm"><label>CONTACT NO<input id="servicePhone" required type="tel"></label><label>EMAIL<input id="serviceEmail" required type="email"></label><label>WORK DESCRIPTION<textarea id="serviceDesc" required placeholder="Describe the work, deliverables and deadline..."></textarea></label><label>TARGET BUDGET OFFER<input id="serviceBudget" required type="number" min="50" max="10000" step="50"></label><label id="serviceIdeaWrap" class="idea-upload hidden">IDEA PHOTO <span>(optional — Apps / 2D Games)</span><input id="serviceIdeaPhoto" type="file" accept="image/*"><small>Attach a screenshot, sketch or reference image.</small></label><div id="servicePreview" class="service-preview hidden"></div><div id="serviceError" class="form-error"></div><button class="neon-btn wide" type="submit">TRANSMIT BRIEF →</button></form>
     </div>
   </div>
 
   <div id="gameModal" class="modal">
-    <div class="game-window glass"><div class="game-window-head"><div><span class="eyebrow">ARCADE SYSTEM</span><h2 id="gameTitle">Game</h2></div><div><span id="gameScore">SCORE 0</span><button class="modal-close" data-close-game>×</button></div></div><canvas id="gameCanvas"></canvas><div class="game-controls"><span id="gameHint">Keyboard / touch controls</span><button id="restartGame" class="neon-btn">RESTART</button></div></div>
+    <div class="game-window glass"><div class="game-window-head"><div><span class="eyebrow">ARCADE SYSTEM</span><h2 id="gameTitle">Game</h2></div><div><span id="gameScore">SCORE 0</span><button class="modal-close" data-close-game>×</button></div></div><canvas id="gameCanvas"></canvas><div id="mobileGameControls" class="mobile-game-controls" aria-label="Touch game controls"><div class="game-pad"><button data-key="ArrowUp">▲</button><div><button data-key="ArrowLeft">◀</button><button data-key="ArrowDown">▼</button><button data-key="ArrowRight">▶</button></div></div><button class="game-action" data-key="Space">ACTION</button></div><div class="game-controls"><span id="gameHint">Keyboard / touch controls</span><button id="restartGame" class="neon-btn">RESTART</button></div></div>
   </div>
+
+  <div id="missionModal" class="modal"><div class="mission-window glass"><button class="modal-close" data-close-mission>×</button><span id="missionType" class="eyebrow">INCOMING MISSION</span><h2 id="missionTitle">Mission</h2><div class="mission-thumb-wrap"><img id="missionThumb" class="mission-thumb" alt="Mission thumbnail"></div><div class="mission-description"><span>WORK DESCRIPTION</span><p id="missionDescription"></p></div><div class="mission-meta"><div><span>CLIENT EMAIL</span><strong id="missionEmail"></strong></div><div><span>CONTACT NO</span><strong id="missionPhone"></strong></div><div><span>TARGET BUDGET</span><strong id="missionBudget"></strong></div></div></div></div>
 
   <div id="toast" class="toast"></div>
   <script src="script.js"></script>

@@ -11,6 +11,8 @@
   const DB_KEY = "wexla_users_v1";
   const SESSION_KEY = "wexla_session_v1";
   const PHOTO_KEY = "wexla_photos_v1";
+  const MISSION_KEY = "wexla_missions_v2";
+  const MEDIA_DB = "wexla_media_v2";
 
   const state = {
     user: null,
@@ -24,44 +26,7 @@
   // DATA
   // ============================================================
 
-  const tasks = [
-    {
-      title: "Gaming landing page",
-      desc: "Responsive neon landing page with hero, pricing and CTA.",
-      budget: 6500,
-      tags: ["WEB", "UI/UX"]
-    },
-    {
-      title: "School presentation deck",
-      desc: "Create a polished 15-slide science presentation with visuals.",
-      budget: 1800,
-      tags: ["PPT", "EDUCATION"]
-    },
-    {
-      title: "Short gaming montage",
-      desc: "Edit a 45-second vertical montage with beat-synced cuts.",
-      budget: 1200,
-      tags: ["VIDEO", "SHORTS"]
-    },
-    {
-      title: "Portfolio website",
-      desc: "Minimal portfolio for a freelance digital artist.",
-      budget: 4800,
-      tags: ["WEB", "PORTFOLIO"]
-    },
-    {
-      title: "Product pitch PPT",
-      desc: "Investor-ready deck with charts and clean visual storytelling.",
-      budget: 7200,
-      tags: ["PPT", "BUSINESS"]
-    },
-    {
-      title: "YouTube video edit",
-      desc: "Cut commentary, add captions, transitions and sound cleanup.",
-      budget: 2500,
-      tags: ["VIDEO", "YOUTUBE"]
-    }
-  ];
+  const tasks = [];
 
   const games = [
     ["snake", "3D Neon Snake Battle", "✦", "Arrow keys / WASD / swipe", "Collect energy nodes and avoid the trail."],
@@ -856,196 +821,435 @@
   // ============================================================
 
   function setupHome() {
+    $("#taskSearch")?.addEventListener("input", renderTasks);
 
-    $("#taskSearch")?.addEventListener(
-      "input",
-      renderTasks
-    );
-
-    $("#budgetSlider")?.addEventListener(
-      "input",
-      () => {
-        updateBudget();
-        renderTasks();
-      }
-    );
-
-    // Ctrl + K
-    document.addEventListener(
-      "keydown",
-      (event) => {
-
-        if (
-          (event.ctrlKey || event.metaKey) &&
-          event.key.toLowerCase() === "k"
-        ) {
-          event.preventDefault();
-
-          $("#taskSearch")?.focus();
-        }
-      }
-    );
-
-    // Service cards
-    $$(".service-card").forEach((card) => {
-
-      card.onclick = () => {
-
-        const title =
-          card.dataset.service;
-
-        $("#serviceTitle").textContent =
-          title;
-
-        $("#servicePhone").value =
-          state.user.phone || "";
-
-        $("#serviceEmail").value =
-          state.user.email;
-
-        $("#serviceBudget").value =
-          $("#budgetSlider").value;
-
-        $("#serviceDesc").value = "";
-
-        openModal("#serviceModal");
-      };
-
+    $("#budgetSlider")?.addEventListener("input", () => {
+      updateBudget();
+      renderTasks();
     });
 
-    $$("[data-close-modal]").forEach(
-      (button) => {
-        button.onclick = () => {
-          closeModal("#serviceModal");
-        };
-      }
-    );
-
-    // Service form
-    $("#serviceForm")?.addEventListener(
-      "submit",
-      (event) => {
-
+    document.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
+        $("#taskSearch")?.focus();
+      }
+    });
 
-        const budget =
-          Number($("#serviceBudget").value);
-
-        if (
-          budget < 50 ||
-          budget > 10000
-        ) {
-          $("#serviceError").textContent =
-            "Budget must be between 50 and 10,000.";
-
-          return;
-        }
-
+    $$(".service-card").forEach((card) => {
+      card.onclick = () => {
+        const title = card.dataset.service;
+        $("#serviceTitle").textContent = title;
+        $("#servicePhone").value = state.user?.phone || "";
+        $("#serviceEmail").value = state.user?.email || "";
+        $("#serviceBudget").value = $("#budgetSlider")?.value || 500;
+        $("#serviceDesc").value = "";
         $("#serviceError").textContent = "";
+        $("#serviceIdeaPhoto").value = "";
+        $("#servicePreview")?.classList.add("hidden");
+        const ideaWrap = $("#serviceIdeaWrap");
+        ideaWrap?.classList.toggle("hidden", !["Making Apps", "Making 2D Games"].includes(title));
+        openModal("#serviceModal");
+      };
+    });
 
-        closeModal("#serviceModal");
-
-        toast(
-          "Brief transmitted to the mission queue."
-        );
-
-        event.target.reset();
+    $("#serviceIdeaPhoto")?.addEventListener("change", async (event) => {
+      const file = event.target.files?.[0];
+      const preview = $("#servicePreview");
+      if (!file || !preview) return;
+      if (!file.type.startsWith("image/")) {
+        event.target.value = "";
+        preview.classList.add("hidden");
+        toast("Please select an image file.");
+        return;
       }
-    );
-
-    // Photo tabs
-    $$("[data-photo-tab]").forEach(
-      (button) => {
-
-        button.onclick = () => {
-
-          $$("[data-photo-tab]")
-            .forEach((item) => {
-              item.classList.toggle(
-                "active",
-                item === button
-              );
-            });
-
-          $("#photoUploadPane")
-            ?.classList.toggle(
-              "hidden",
-              button.dataset.photoTab !== "upload"
-            );
-
-          $("#photoSearchPane")
-            ?.classList.toggle(
-              "hidden",
-              button.dataset.photoTab !== "search"
-            );
-        };
-
+      try {
+        const dataUrl = await imageToDataURL(file, 900, .72);
+        preview.innerHTML = `<img src="${dataUrl}" alt="Idea preview"><span>IDEA PREVIEW READY</span>`;
+        preview.classList.remove("hidden");
+      } catch {
+        preview.classList.add("hidden");
+        toast("Could not preview that image.");
       }
-    );
+    });
 
-    $("#photoSearch")?.addEventListener(
-      "input",
-      renderPhotos
-    );
+    $$('[data-close-modal]').forEach((button) => {
+      button.onclick = () => closeModal("#serviceModal");
+    });
 
-    // Upload photo
-    $("#photoForm")?.addEventListener(
-      "submit",
-      (event) => {
+    $("#serviceForm")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const budget = Number($("#serviceBudget").value);
+      const phone = $("#servicePhone").value.trim();
+      const email = $("#serviceEmail").value.trim().toLowerCase();
+      const description = $("#serviceDesc").value.trim();
+      const title = $("#serviceTitle").textContent.trim();
+      const error = $("#serviceError");
 
-        event.preventDefault();
+      if (!phone || !email || !description) {
+        error.textContent = "CONTACT NO, EMAIL and WORK DESCRIPTION are required.";
+        return;
+      }
+      if (budget < 50 || budget > 10000) {
+        error.textContent = "Budget must be between 50 and 10,000.";
+        return;
+      }
 
-        const file =
-          $("#photoFile").files[0];
-
-        if (!file) return;
-
-        if (!file.type.startsWith("image/")) {
-          toast("Please select an image.");
-          return;
+      error.textContent = "";
+      try {
+        let imageBlob = null;
+        const ideaFile = $("#serviceIdeaPhoto")?.files?.[0];
+        if (ideaFile && ["Making Apps", "Making 2D Games"].includes(title)) {
+          imageBlob = await imageToBlob(ideaFile, 1000, .76);
         }
 
-        const reader =
-          new FileReader();
-
-        reader.onload = () => {
-
-          const photos = getPhotos();
-
-          photos.unshift({
-            id: crypto.randomUUID(),
-            title:
-              $("#photoTitle").value.trim(),
-            desc:
-              $("#photoDescription").value.trim(),
-            data: reader.result,
-            owner: state.user.username
-          });
-
-          try {
-
-            localStorage.setItem(
-              PHOTO_KEY,
-              JSON.stringify(photos)
-            );
-
-            event.target.reset();
-
-            renderPhotos();
-
-            toast("Visual asset published.");
-
-          } catch {
-
-            toast(
-              "Asset is too large for local browser storage."
-            );
-          }
+        const mission = {
+          id: crypto.randomUUID(),
+          title,
+          desc: description,
+          budget,
+          phone,
+          email,
+          owner: state.user?.username || "Wexla Client",
+          ownerId: state.user?.id || null,
+          created: Date.now(),
+          imageBlob
         };
 
-        reader.readAsDataURL(file);
+        await putMission(mission);
+        closeModal("#serviceModal");
+        event.target.reset();
+        $("#serviceIdeaWrap")?.classList.add("hidden");
+        $("#servicePreview")?.classList.add("hidden");
+        renderTasks();
+        toast("Incoming mission published successfully.");
+      } catch (err) {
+        console.error(err);
+        error.textContent = "Mission could not be saved. Please try a smaller image.";
       }
-    );
+    });
+
+    $$('[data-photo-tab]').forEach((button) => {
+      button.onclick = () => {
+        $$('[data-photo-tab]').forEach((item) => item.classList.toggle('active', item === button));
+        $("#photoUploadPane")?.classList.toggle("hidden", button.dataset.photoTab !== "upload");
+        $("#photoSearchPane")?.classList.toggle("hidden", button.dataset.photoTab !== "search");
+        renderPhotos();
+      };
+    });
+
+    $("#photoSearch")?.addEventListener("input", renderPhotos);
+
+    $("#photoFile")?.addEventListener("change", (event) => {
+      const file = event.target.files?.[0];
+      const dropzone = document.querySelector(".dropzone");
+      if (file && dropzone) {
+        const text = dropzone.querySelector("strong");
+        if (text) text.textContent = file.name;
+      }
+    });
+
+    $("#photoForm")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = $("#photoFile")?.files?.[0];
+      if (!file) {
+        toast("Select a photo first.");
+        return;
+      }
+      if (!file.type.startsWith("image/")) {
+        toast("Please select an image.");
+        return;
+      }
+
+      try {
+        const blob = await imageToBlob(file, 1600, .82);
+        const photo = {
+          id: crypto.randomUUID(),
+          title: $("#photoTitle").value.trim(),
+          desc: $("#photoDescription").value.trim(),
+          blob,
+          owner: state.user?.username || "Wexla Creator",
+          created: Date.now()
+        };
+        await putPhoto(photo);
+        event.target.reset();
+        const text = document.querySelector(".dropzone strong");
+        if (text) text.textContent = "SELECT A LOCAL PHOTO";
+        await renderPhotos();
+        toast("Visual asset published to the gallery.");
+      } catch (err) {
+        console.error(err);
+        toast("Photo could not be saved. Try a smaller image.");
+      }
+    });
+
+    $$('[data-close-mission]').forEach((button) => {
+      button.onclick = () => closeModal("#missionModal");
+    });
+
+    $("#missionModal")?.addEventListener("click", (event) => {
+      if (event.target.id === "missionModal") closeModal("#missionModal");
+    });
+  }
+
+  // ============================================================
+  // LOCAL-FIRST MEDIA DATABASE
+  // ============================================================
+
+  function openMediaDB() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) return reject(new Error("IndexedDB unavailable"));
+      const request = indexedDB.open(MEDIA_DB, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains("photos")) db.createObjectStore("photos", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("missions")) db.createObjectStore("missions", { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function idbPut(storeName, value) {
+    const db = await openMediaDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, "readwrite");
+      tx.objectStore(storeName).put(value);
+      tx.oncomplete = () => { db.close(); resolve(value); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    });
+  }
+
+  async function idbGetAll(storeName) {
+    const db = await openMediaDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, "readonly");
+      const request = tx.objectStore(storeName).getAll();
+      request.onsuccess = () => { db.close(); resolve(request.result || []); };
+      request.onerror = () => { db.close(); reject(request.error); };
+    });
+  }
+
+  async function idbGet(storeName, id) {
+    const db = await openMediaDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, "readonly");
+      const request = tx.objectStore(storeName).get(id);
+      request.onsuccess = () => { db.close(); resolve(request.result || null); };
+      request.onerror = () => { db.close(); reject(request.error); };
+    });
+  }
+
+  async function putPhoto(photo) { return idbPut("photos", photo); }
+  async function putMission(mission) { return idbPut("missions", mission); }
+
+  function imageToBlob(file, maxSize = 1600, quality = .82) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error || new Error("File read failed"));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("Image decode failed"));
+        img.onload = () => {
+          const scale = Math.min(1, maxSize / Math.max(img.naturalWidth, img.naturalHeight));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          const ctx = canvas.getContext("2d", { alpha: false });
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Compression failed")), "image/jpeg", quality);
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function imageToDataURL(file, maxSize = 900, quality = .72) {
+    return imageToBlob(file, maxSize, quality).then((blob) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    }));
+  }
+
+  function blobURL(blob) {
+    return blob instanceof Blob ? URL.createObjectURL(blob) : String(blob || "");
+  }
+
+  async function migrateOldPhotos() {
+    let old = [];
+    try { old = JSON.parse(localStorage.getItem(PHOTO_KEY) || "[]"); } catch { old = []; }
+    if (!old.length) return;
+    try {
+      const current = await idbGetAll("photos");
+      if (current.length) return;
+      for (const item of old) {
+        if (!item.data) continue;
+        try {
+          const response = await fetch(item.data);
+          const blob = await response.blob();
+          await putPhoto({ id: item.id || crypto.randomUUID(), title: item.title || "Untitled", desc: item.desc || "", blob, owner: item.owner || "Wexla Creator", created: Date.now() });
+        } catch {}
+      }
+      localStorage.removeItem(PHOTO_KEY);
+    } catch {}
+  }
+
+  async function getGalleryPhotos() {
+    await migrateOldPhotos();
+    try { return await idbGetAll("photos"); } catch { return []; }
+  }
+
+  // ============================================================
+  // INCOMING MISSIONS
+  // ============================================================
+
+  async function getMissions() {
+    try { return (await idbGetAll("missions")).sort((a, b) => b.created - a.created); }
+    catch { return []; }
+  }
+
+  function missionMatches(mission, search, maximumBudget) {
+    const searchable = `${mission.title} ${mission.desc} ${mission.email} ${mission.owner}`.toLowerCase();
+    return searchable.includes(search) && mission.budget <= maximumBudget;
+  }
+
+  async function renderTasks() {
+    const grid = $("#taskGrid");
+    if (!grid) return;
+    const search = ($("#taskSearch")?.value || "").trim().toLowerCase();
+    const maximumBudget = Number($("#budgetSlider")?.value || 10000);
+    const missions = (await getMissions()).filter((mission) => missionMatches(mission, search, maximumBudget));
+
+    if (!missions.length) {
+      grid.innerHTML = `<article class="task-card glass empty-mission"><span>INCOMING / 00</span><h4>No incoming missions yet.</h4><p>Choose Website, PPT, Video Editing, Apps or 2D Games above to publish the first client requirement.</p></article>`;
+    } else {
+      grid.innerHTML = missions.map((mission) => `
+        <article class="task-card mission-card glass" data-mission-id="${escapeHTML(mission.id)}">
+          <div class="mission-card-thumb"><span>${escapeHTML((mission.title || "MISSION").slice(0, 1).toUpperCase())}</span></div>
+          <div class="mission-card-copy">
+            <span>${escapeHTML(mission.title)} / INCOMING</span>
+            <strong class="task-budget">${money(mission.budget)}</strong>
+            <h4>${escapeHTML(mission.desc.slice(0, 78))}${mission.desc.length > 78 ? "…" : ""}</h4>
+            <p>CLIENT: ${escapeHTML(mission.email)}</p>
+            <div><span class="tag">${escapeHTML(mission.owner || "CLIENT")}</span><span class="tag">OPEN BRIEF</span></div>
+          </div>
+        </article>
+      `).join("");
+    }
+
+    const counter = $("#taskCount");
+    if (counter) counter.textContent = `${String(missions.length).padStart(2, "0")} MATCHES`;
+
+    $$(".mission-card").forEach((card) => {
+      card.onclick = () => openMission(card.dataset.missionId);
+    });
+  }
+
+  async function openMission(id) {
+    const mission = await idbGet("missions", id);
+    if (!mission) return;
+    $("#missionType").textContent = `${mission.title.toUpperCase()} / INCOMING MISSION`;
+    $("#missionTitle").textContent = "Client requirement";
+    $("#missionDescription").textContent = mission.desc;
+    $("#missionEmail").textContent = mission.email;
+    $("#missionPhone").textContent = mission.phone;
+    $("#missionBudget").textContent = money(mission.budget);
+
+    const thumb = $("#missionThumb");
+    if (thumb._objectUrl) URL.revokeObjectURL(thumb._objectUrl);
+    if (mission.imageBlob) {
+      thumb._objectUrl = blobURL(mission.imageBlob);
+      thumb.src = thumb._objectUrl;
+      thumb.classList.remove("hidden");
+    } else {
+      thumb._objectUrl = "";
+      thumb.removeAttribute("src");
+      thumb.classList.add("hidden");
+    }
+    openModal("#missionModal");
+  }
+
+  // ============================================================
+  // PHOTO GALLERY OVERRIDE — IndexedDB + touch friendly
+  // ============================================================
+
+  async function renderPhotos() {
+    const gallery = $("#photoGallery");
+    if (!gallery) return;
+    const search = ($("#photoSearch")?.value || "").trim().toLowerCase();
+    const photos = (await getGalleryPhotos()).filter((photo) => `${photo.title} ${photo.desc}`.toLowerCase().includes(search));
+    gallery.innerHTML = "";
+
+    if (!photos.length) {
+      gallery.innerHTML = `<div class="task-card glass"><h4>Gallery is quiet.</h4><p>Upload the first visual asset to activate this exchange.</p></div>`;
+      return;
+    }
+
+    photos.forEach((photo) => {
+      const card = document.createElement("article");
+      card.className = "photo-card";
+      const image = document.createElement("img");
+      image.alt = photo.title || "Wexla asset";
+      image.src = blobURL(photo.blob);
+      const info = document.createElement("div");
+      info.className = "photo-info";
+      const title = document.createElement("strong");
+      title.textContent = photo.title || "Untitled";
+      const desc = document.createElement("p");
+      desc.textContent = photo.desc || "Community visual asset";
+      const owner = document.createElement("small");
+      owner.textContent = `UPLOADED BY ${photo.owner || "CREATOR"}`;
+      const button = document.createElement("button");
+      button.className = "install-btn";
+      button.textContent = "INSTALL / DOWNLOAD";
+      button.onclick = () => downloadPhoto(photo);
+      info.append(title, desc, owner, button);
+      card.append(image, info);
+      gallery.append(card);
+    });
+  }
+
+  function downloadPhoto(photo) {
+    if (!photo) return;
+    const url = photo.blob instanceof Blob ? URL.createObjectURL(photo.blob) : photo.data;
+    if (!url) return;
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${(photo.title || "wexla-asset").replace(/[^a-z0-9_-]+/gi, "-")}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    if (photo.blob instanceof Blob) setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Asset acquisition started.");
+  }
+
+  // ============================================================
+  // MOBILE GAME CONTROLLER
+  // ============================================================
+
+  function setupMobileGameControls() {
+    const controls = $("#mobileGameControls");
+    if (!controls) return;
+    controls.addEventListener("pointerdown", (event) => {
+      const button = event.target.closest("[data-key]");
+      if (!button) return;
+      event.preventDefault();
+      const key = button.dataset.key;
+      window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      button.classList.add("pressed");
+    });
+    const release = (event) => {
+      const button = event.target.closest?.("[data-key]");
+      if (!button) return;
+      const key = button.dataset.key;
+      window.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+      button.classList.remove("pressed");
+    };
+    controls.addEventListener("pointerup", release);
+    controls.addEventListener("pointercancel", release);
+    controls.addEventListener("pointerleave", release);
   }
 
   // ============================================================
@@ -3608,6 +3812,7 @@
   setupAuthentication();
   setupNavigation();
   setupHome();
+  setupMobileGameControls();
   boot();
 
 })();

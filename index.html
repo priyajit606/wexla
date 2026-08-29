@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Wexla — neon work discovery, creative services and arcade hub.">
+  <meta name="theme-color" content="#070912">
+  <title>Wexla — Neon Digital Hub</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="bootScreen" class="boot-screen">
+    <div class="boot-core"><span>WEXLA</span><i></i></div>
+    <p>INITIALIZING NEURAL GATEWAY...</p>
+  </div>
+
+  <div id="authGate" class="auth-gate hidden">
+    <div class="auth-backdrop"></div>
+    <section class="auth-shell">
+      <div class="auth-brand">
+        <div class="brand-mark">W</div>
+        <div><strong>WEXLA</strong><span>NEURAL DIGITAL HUB</span></div>
+      </div>
+      <div class="auth-copy">
+        <span class="eyebrow">SECURE ACCESS PROTOCOL</span>
+        <h1>Build. Create.<br><em>Connect.</em></h1>
+        <p>Enter the authenticated creative network. Your local browser session protects the hub until you explicitly sign out.</p>
+      </div>
+      <div class="auth-card glass">
+        <div class="auth-tabs">
+          <button class="active" data-auth-tab="login">LOGIN</button>
+          <button data-auth-tab="register">REGISTER</button>
+        </div>
+
+        <form id="loginForm" class="auth-form">
+          <label>USERNAME OR EMAIL<input id="loginIdentity" required autocomplete="username" placeholder="operator@wexla.local"></label>
+          <label>PASSWORD<input id="loginPassword" required type="password" autocomplete="current-password" placeholder="••••••••"></label>
+          <div id="loginError" class="form-error"></div>
+          <button class="neon-btn wide" type="submit">AUTHENTICATE <span>→</span></button>
+          <small class="form-hint">Demo data stays in this browser via localStorage.</small>
+        </form>
+
+        <form id="registerForm" class="auth-form hidden">
+          <div class="two-col">
+            <label>FIRST USERNAME<input id="regUsername" required minlength="3" maxlength="24" placeholder="NeoCreator"></label>
+            <label>EMAIL<input id="regEmail" required type="email" placeholder="you@example.com"></label>
+          </div>
+          <div class="two-col">
+            <label>PASSWORD<input id="regPassword" required minlength="8" type="password" placeholder="8+ characters"></label>
+            <label>COUNTRY<select id="regCountry" required>
+              <option value="">Select country</option><option>India</option><option>United States</option><option>United Kingdom</option><option>Canada</option><option>Australia</option><option>Germany</option><option>Japan</option><option>Other</option>
+            </select></label>
+          </div>
+          <label>PHONE NUMBER<input id="regPhone" required type="tel" placeholder="+91 98765 43210"></label>
+          <div class="entity-switch"><span>ACCOUNT TYPE</span><div><button type="button" class="switch-option active" data-entity="Solo">SOLO FREELANCER</button><button type="button" class="switch-option" data-entity="Company">CORPORATE ENTITY</button></div></div>
+          <div id="registerError" class="form-error"></div>
+          <button class="neon-btn wide" type="submit">CREATE IDENTITY <span>↗</span></button>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <div id="app" class="app hidden">
+    <canvas id="ambientCanvas"></canvas>
+    <header class="topbar glass">
+      <a class="logo" href="#" data-nav="home"><span class="logo-orb">W</span><span>WEXLA<small>NEON HUB</small></span></a>
+      <nav><button class="nav-btn active" data-nav="home">HOME</button><button class="nav-btn" data-nav="games">GAMES</button></nav>
+      <div class="top-actions"><span id="sessionStatus" class="session-pill">● SECURE</span><button id="profileBtn" class="avatar" title="Profile">W</button></div>
+    </header>
+
+    <main>
+      <section id="homePage" class="page active">
+        <div class="hero">
+          <div class="hero-grid"></div>
+          <div class="eyebrow">WEXLA / WORK DISCOVERY MATRIX</div>
+          <h2>Find the next<br><span>digital mission.</span></h2>
+          <p>Discover creative work, publish visual assets, and connect your skills with live requirements.</p>
+          <div class="search-wrap">
+            <span class="search-icon">⌕</span><input id="taskSearch" type="search" placeholder="Search websites, PPT, editing, design..."><kbd>CTRL K</kbd>
+          </div>
+          <div class="budget-row"><span>REGIONAL BUDGET FILTER</span><output id="budgetValue">₹5,000</output></div>
+          <input id="budgetSlider" class="budget-slider" type="range" min="50" max="10000" value="500" step="50">
+          <div class="range-labels"><span>₹50</span><span>₹10,000</span></div>
+        </div>
+
+        <section class="section-block">
+          <div class="section-title"><div><span class="eyebrow">SERVICES</span><h3>Premium creation protocols</h3></div><span class="section-count">03 MACROS</span></div>
+          <div class="service-grid">
+            <article class="service-card glass" data-service="Making Website"><div class="service-icon">⌘</div><span>01 / WEB</span><h4>Making Website</h4><p>Landing pages, portfolios, dashboards and modern web experiences.</p><button class="text-btn">OPEN BRIEF →</button></article>
+            <article class="service-card glass" data-service="Making PPT"><div class="service-icon">▤</div><span>02 / DECK</span><h4>Making PPT</h4><p>Presentation systems designed for clarity, impact and storytelling.</p><button class="text-btn">OPEN BRIEF →</button></article>
+            <article class="service-card glass" data-service="Video Editing"><div class="service-icon">▶</div><span>03 / VIDEO</span><h4>Video Editing</h4><p>Short-form edits, gaming videos, reels and cinematic social content.</p><button class="text-btn">OPEN BRIEF →</button></article>
+          </div>
+        </section>
+
+        <section class="section-block">
+          <div class="section-title"><div><span class="eyebrow">DISCOVERY FEED</span><h3>Incoming missions</h3></div><span id="taskCount" class="section-count">06 MATCHES</span></div>
+          <div id="taskGrid" class="task-grid"></div>
+        </section>
+
+        <section class="section-block photo-section">
+          <div class="section-title"><div><span class="eyebrow">NEED NATURE PHOTOS</span><h3>Visual asset exchange</h3></div></div>
+          <div class="photo-tabs"><button class="active" data-photo-tab="upload">UPLOAD PHOTO</button><button data-photo-tab="search">SEARCH PHOTO</button></div>
+          <div id="photoUploadPane" class="photo-pane">
+            <form id="photoForm" class="photo-upload glass">
+              <div class="dropzone"><input id="photoFile" type="file" accept="image/*" required><div class="drop-icon">＋</div><strong>SELECT A LOCAL PHOTO</strong><small>JPG, PNG, WEBP · Stored locally in this demo</small></div>
+              <div><label>TITLE<input id="photoTitle" required maxlength="60" placeholder="Misty mountain morning"></label><label>DESCRIPTION <span>(optional)</span><textarea id="photoDescription" maxlength="180" placeholder="Describe the visual asset..."></textarea></label><button class="neon-btn" type="submit">PUBLISH ASSET</button></div>
+            </form>
+          </div>
+          <div id="photoSearchPane" class="photo-pane hidden"><div class="photo-search"><input id="photoSearch" placeholder="Search public gallery...">⌕</div></div>
+          <div id="photoGallery" class="photo-gallery"></div>
+        </section>
+      </section>
+
+      <section id="gamesPage" class="page">
+        <div class="game-hero"><span class="eyebrow">WEXLA / HYPER ARCADE</span><h2>ENTER THE<br><span>NEON ARENA.</span></h2><p>Ten browser-native arcade simulations. Choose a system and launch it.</p></div>
+        <div id="gameGrid" class="game-grid"></div>
+      </section>
+    </main>
+
+    <footer><span>WEXLA SYSTEMS © 2026</span><span>LOCAL-FIRST / NO EXTERNAL DATABASE</span><button id="logoutBtn">TERMINATE SESSION</button></footer>
+  </div>
+
+  <aside id="profilePanel" class="side-panel">
+    <div class="panel-head"><div><span class="eyebrow">IDENTITY</span><h2>Profile</h2></div><button class="icon-btn" data-close-profile>×</button></div>
+    <div class="profile-large"><div id="profileAvatar" class="avatar xl">W</div><label class="upload-avatar">CHANGE PHOTO<input id="avatarInput" type="file" accept="image/*"></label></div>
+    <div class="profile-form"><label>REGISTERED USERNAME<input id="profileUsername" disabled></label><label>REGISTERED EMAIL<input id="profileEmail" disabled></label><label>COUNTRY<input id="profileCountry" disabled></label><label>ACCOUNT TYPE<input id="profileEntity" disabled></label></div>
+    <div class="theme-box"><span>INTERFACE THEME</span><div class="theme-switch"><button class="active" data-theme="dark">DEEP COSMIC</button><button data-theme="light">CYBER WHITE</button></div></div>
+    <button id="profileClose" class="neon-btn wide">RETURN TO HUB</button>
+  </aside>
+  <div id="panelBackdrop" class="panel-backdrop"></div>
+
+  <div id="serviceModal" class="modal">
+    <div class="modal-card glass"><button class="modal-close" data-close-modal>×</button><span class="eyebrow">NEW CLIENT BRIEF</span><h2 id="serviceTitle">Making Website</h2><p>Transmit requirements to your local mission queue.</p>
+      <form id="serviceForm"><label>CONTACT NO<input id="servicePhone" required type="tel"></label><label>EMAIL<input id="serviceEmail" required type="email"></label><label>WORK DESCRIPTION<textarea id="serviceDesc" required placeholder="Describe the work, deliverables and deadline..."></textarea></label><label>TARGET BUDGET OFFER<input id="serviceBudget" required type="number" min="50" max="10000" step="50"></label><div id="serviceError" class="form-error"></div><button class="neon-btn wide" type="submit">TRANSMIT BRIEF →</button></form>
+    </div>
+  </div>
+
+  <div id="gameModal" class="modal">
+    <div class="game-window glass"><div class="game-window-head"><div><span class="eyebrow">ARCADE SYSTEM</span><h2 id="gameTitle">Game</h2></div><div><span id="gameScore">SCORE 0</span><button class="modal-close" data-close-game>×</button></div></div><canvas id="gameCanvas"></canvas><div class="game-controls"><span id="gameHint">Keyboard / touch controls</span><button id="restartGame" class="neon-btn">RESTART</button></div></div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="script.js"></script>
+</body>
+</html>

@@ -144,6 +144,24 @@
   <div id="missionModal" class="modal"><div class="mission-window glass"><button class="modal-close" data-close-mission>×</button><span id="missionType" class="eyebrow">INCOMING MISSION</span><h2 id="missionTitle">Mission</h2><div class="mission-thumb-wrap"><img id="missionThumb" class="mission-thumb" alt="Mission thumbnail"></div><div class="mission-description"><span>WORK DESCRIPTION</span><p id="missionDescription"></p></div><div class="mission-meta"><div><span>CLIENT EMAIL</span><strong id="missionEmail"></strong></div><div><span>CONTACT NO</span><strong id="missionPhone"></strong></div><div><span>TARGET BUDGET</span><strong id="missionBudget"></strong></div></div></div></div>
 
   <div id="toast" class="toast"></div>
+  <!-- Firebase SDK / Analytics -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-analytics.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCDVwvbF4MtlQRyMODrLjKKxHKdwKAAnyI",
+      authDomain: "wexla-c0d95.firebaseapp.com",
+      projectId: "wexla-c0d95",
+      storageBucket: "wexla-c0d95.firebasestorage.app",
+      messagingSenderId: "1014259811373",
+      appId: "1:1014259811373:web:5135926a7b68f38f9ea4a4",
+      measurementId: "G-CZV54GE36L"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    getAnalytics(app);
+  </script>
   <script src="script.js"></script>
 </body>
 </html>

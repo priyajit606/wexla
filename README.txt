@@ -19,3 +19,6 @@ Main fixes:
 
 Important:
 This is still a frontend-only/local-first build. Browser localStorage/IndexedDB is per browser/device. For a real public website where different people on different phones/laptops share the same accounts, missions and photos, connect a backend database + file storage (for example Supabase/Firebase) instead of browser-only storage.
+
+
+Firebase added: Firebase App + Analytics SDK configuration is initialized in index.html.

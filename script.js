@@ -152,6 +152,7 @@
     renderGames();
     updateBudget();
     startAmbientBackground();
+    startCloudListeners();
   }
 
   // ============================================================
@@ -815,499 +816,1338 @@
       }
     );
   }
+    // ============================================================
+  // FIREBASE FIRESTORE — CLOUD DATA LAYER
+  // ============================================================
+
+  const firebaseReady = (async () => {
+    const [
+      firebaseApp,
+      firebaseFirestore
+    ] = await Promise.all([
+      import(
+        "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js"
+      ),
+      import(
+        "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js"
+      )
+    ]);
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCDVwvbF4MtlQRyMODlRjKKxHKdwKAAnyI",
+      authDomain: "://firebaseapp.com",
+      projectId: "wexla-c0d95",
+      storageBucket: "wexla-c0d95.firebasestorage.app",
+      messagingSenderId: "1014259811373",
+      appId: "1:1014259811373:web:5135926a7b68f38f9ea4a4",
+      measurementId: "G-CZV54GE36L"
+    };
+
+    const app =
+      firebaseApp.initializeApp(firebaseConfig);
+
+    const db =
+      firebaseFirestore.getFirestore(app);
+
+    return {
+      db,
+      collection: firebaseFirestore.collection,
+      doc: firebaseFirestore.doc,
+      setDoc: firebaseFirestore.setDoc,
+      getDocs: firebaseFirestore.getDocs,
+      query: firebaseFirestore.query,
+      orderBy: firebaseFirestore.orderBy,
+      onSnapshot: firebaseFirestore.onSnapshot
+    };
+  })();
 
   // ============================================================
-  // HOME
+  // FIREBASE CLOUD STATE
   // ============================================================
 
-  function setupHome() {
-    $("#taskSearch")?.addEventListener("input", renderTasks);
+  const cloudState = {
+    missions: [],
+    photos: [],
+    missionUnsubscribe: null,
+    photoUnsubscribe: null,
+    listenersStarted: false
+  };
 
-    $("#budgetSlider")?.addEventListener("input", () => {
-      updateBudget();
-      renderTasks();
-    });
+  // ============================================================
+  // FIREBASE ERROR HANDLING
+  // ============================================================
 
-    document.addEventListener("keydown", (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        $("#taskSearch")?.focus();
-      }
-    });
+  function firebaseErrorMessage(error) {
+    if (!error) {
+      return "Cloud operation failed.";
+    }
 
-    $$(".service-card").forEach((card) => {
-      card.onclick = () => {
-        const title = card.dataset.service;
-        $("#serviceTitle").textContent = title;
-        $("#servicePhone").value = state.user?.phone || "";
-        $("#serviceEmail").value = state.user?.email || "";
-        $("#serviceBudget").value = $("#budgetSlider")?.value || 500;
-        $("#serviceDesc").value = "";
-        $("#serviceError").textContent = "";
-        $("#serviceIdeaPhoto").value = "";
-        $("#servicePreview")?.classList.add("hidden");
-        const ideaWrap = $("#serviceIdeaWrap");
-        ideaWrap?.classList.toggle("hidden", !["Making Apps", "Making 2D Games"].includes(title));
-        openModal("#serviceModal");
+    const code =
+      error.code ||
+      error.message ||
+      "";
+
+    if (
+      code.includes("permission-denied") ||
+      code.includes("PERMISSION_DENIED")
+    ) {
+      return "Firebase permission denied. Check your Firestore Rules.";
+    }
+
+    if (
+      code.includes("failed-precondition")
+    ) {
+      return "Firebase needs an index or configuration update.";
+    }
+
+    if (
+      code.includes("unavailable")
+    ) {
+      return "Firebase is temporarily unavailable. Check your internet connection.";
+    }
+
+    if (
+      code.includes("network")
+    ) {
+      return "Network error. Please check your internet connection.";
+    }
+
+    return (
+      error.message ||
+      "Cloud operation failed."
+    );
+  }
+
+  function showCloudImageError(error, fallback) {
+    if (
+      error?.message ===
+      "IMAGE_TOO_LARGE_FOR_FIRESTORE"
+    ) {
+      toast(
+        "Image is too large for Firestore after compression."
+      );
+      return;
+    }
+
+    toast(
+      firebaseErrorMessage(error) ||
+      fallback
+    );
+  }
+
+  // ============================================================
+  // FIRESTORE IMAGE SIZE CHECK
+  // ============================================================
+
+  function assertFirestoreImageSize(dataUrl) {
+    if (!dataUrl) return;
+
+    /*
+     * Base64 uses approximately 4/3 of the original
+     * binary size.
+     *
+     * Firestore documents have a roughly 1 MiB limit,
+     * so keep the image comfortably below that limit.
+     */
+    const approximateBytes =
+      Math.ceil((dataUrl.length * 3) / 4);
+
+    if (approximateBytes > 700 * 1024) {
+      throw new Error(
+        "IMAGE_TOO_LARGE_FOR_FIRESTORE"
+      );
+    }
+  }
+
+  // ============================================================
+  // IMAGE COMPRESSION
+  // ============================================================
+
+  function imageToBlob(
+    file,
+    maxSize = 1600,
+    quality = 0.82
+  ) {
+    return new Promise((resolve, reject) => {
+
+      const reader =
+        new FileReader();
+
+      reader.onerror = () => {
+        reject(
+          new Error("Could not read image.")
+        );
       };
-    });
 
-    $("#serviceIdeaPhoto")?.addEventListener("change", async (event) => {
-      const file = event.target.files?.[0];
-      const preview = $("#servicePreview");
-      if (!file || !preview) return;
-      if (!file.type.startsWith("image/")) {
-        event.target.value = "";
-        preview.classList.add("hidden");
-        toast("Please select an image file.");
-        return;
-      }
-      try {
-        const dataUrl = await imageToDataURL(file, 900, .72);
-        preview.innerHTML = `<img src="${dataUrl}" alt="Idea preview"><span>IDEA PREVIEW READY</span>`;
-        preview.classList.remove("hidden");
-      } catch {
-        preview.classList.add("hidden");
-        toast("Could not preview that image.");
-      }
-    });
-
-    $$('[data-close-modal]').forEach((button) => {
-      button.onclick = () => closeModal("#serviceModal");
-    });
-
-    $("#serviceForm")?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const budget = Number($("#serviceBudget").value);
-      const phone = $("#servicePhone").value.trim();
-      const email = $("#serviceEmail").value.trim().toLowerCase();
-      const description = $("#serviceDesc").value.trim();
-      const title = $("#serviceTitle").textContent.trim();
-      const error = $("#serviceError");
-
-      if (!phone || !email || !description) {
-        error.textContent = "CONTACT NO, EMAIL and WORK DESCRIPTION are required.";
-        return;
-      }
-      if (budget < 50 || budget > 10000) {
-        error.textContent = "Budget must be between 50 and 10,000.";
-        return;
-      }
-
-      error.textContent = "";
-      try {
-        let imageBlob = null;
-        const ideaFile = $("#serviceIdeaPhoto")?.files?.[0];
-        if (ideaFile && ["Making Apps", "Making 2D Games"].includes(title)) {
-          imageBlob = await imageToBlob(ideaFile, 1000, .76);
-        }
-
-        const mission = {
-          id: crypto.randomUUID(),
-          title,
-          desc: description,
-          budget,
-          phone,
-          email,
-          owner: state.user?.username || "Wexla Client",
-          ownerId: state.user?.id || null,
-          created: Date.now(),
-          imageBlob
-        };
-
-        await putMission(mission);
-        closeModal("#serviceModal");
-        event.target.reset();
-        $("#serviceIdeaWrap")?.classList.add("hidden");
-        $("#servicePreview")?.classList.add("hidden");
-        renderTasks();
-        toast("Incoming mission published successfully.");
-      } catch (err) {
-        console.error(err);
-        error.textContent = "Mission could not be saved. Please try a smaller image.";
-      }
-    });
-
-    $$('[data-photo-tab]').forEach((button) => {
-      button.onclick = () => {
-        $$('[data-photo-tab]').forEach((item) => item.classList.toggle('active', item === button));
-        $("#photoUploadPane")?.classList.toggle("hidden", button.dataset.photoTab !== "upload");
-        $("#photoSearchPane")?.classList.toggle("hidden", button.dataset.photoTab !== "search");
-        renderPhotos();
-      };
-    });
-
-    $("#photoSearch")?.addEventListener("input", renderPhotos);
-
-    $("#photoFile")?.addEventListener("change", (event) => {
-      const file = event.target.files?.[0];
-      const dropzone = document.querySelector(".dropzone");
-      if (file && dropzone) {
-        const text = dropzone.querySelector("strong");
-        if (text) text.textContent = file.name;
-      }
-    });
-
-    $("#photoForm")?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const file = $("#photoFile")?.files?.[0];
-      if (!file) {
-        toast("Select a photo first.");
-        return;
-      }
-      if (!file.type.startsWith("image/")) {
-        toast("Please select an image.");
-        return;
-      }
-
-      try {
-        const blob = await imageToBlob(file, 1600, .82);
-        const photo = {
-          id: crypto.randomUUID(),
-          title: $("#photoTitle").value.trim(),
-          desc: $("#photoDescription").value.trim(),
-          blob,
-          owner: state.user?.username || "Wexla Creator",
-          created: Date.now()
-        };
-        await putPhoto(photo);
-        event.target.reset();
-        const text = document.querySelector(".dropzone strong");
-        if (text) text.textContent = "SELECT A LOCAL PHOTO";
-        await renderPhotos();
-        toast("Visual asset published to the gallery.");
-      } catch (err) {
-        console.error(err);
-        toast("Photo could not be saved. Try a smaller image.");
-      }
-    });
-
-    $$('[data-close-mission]').forEach((button) => {
-      button.onclick = () => closeModal("#missionModal");
-    });
-
-    $("#missionModal")?.addEventListener("click", (event) => {
-      if (event.target.id === "missionModal") closeModal("#missionModal");
-    });
-  }
-
-  // ============================================================
-  // LOCAL-FIRST MEDIA DATABASE
-  // ============================================================
-
-  function openMediaDB() {
-    return new Promise((resolve, reject) => {
-      if (!window.indexedDB) return reject(new Error("IndexedDB unavailable"));
-      const request = indexedDB.open(MEDIA_DB, 1);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains("photos")) db.createObjectStore("photos", { keyPath: "id" });
-        if (!db.objectStoreNames.contains("missions")) db.createObjectStore("missions", { keyPath: "id" });
-      };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async function idbPut(storeName, value) {
-    const db = await openMediaDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, "readwrite");
-      tx.objectStore(storeName).put(value);
-      tx.oncomplete = () => { db.close(); resolve(value); };
-      tx.onerror = () => { db.close(); reject(tx.error); };
-    });
-  }
-
-  async function idbGetAll(storeName) {
-    const db = await openMediaDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, "readonly");
-      const request = tx.objectStore(storeName).getAll();
-      request.onsuccess = () => { db.close(); resolve(request.result || []); };
-      request.onerror = () => { db.close(); reject(request.error); };
-    });
-  }
-
-  async function idbGet(storeName, id) {
-    const db = await openMediaDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, "readonly");
-      const request = tx.objectStore(storeName).get(id);
-      request.onsuccess = () => { db.close(); resolve(request.result || null); };
-      request.onerror = () => { db.close(); reject(request.error); };
-    });
-  }
-
-  async function putPhoto(photo) { return idbPut("photos", photo); }
-  async function putMission(mission) { return idbPut("missions", mission); }
-
-  function imageToBlob(file, maxSize = 1600, quality = .82) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(reader.error || new Error("File read failed"));
       reader.onload = () => {
-        const img = new Image();
-        img.onerror = () => reject(new Error("Image decode failed"));
-        img.onload = () => {
-          const scale = Math.min(1, maxSize / Math.max(img.naturalWidth, img.naturalHeight));
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
-          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
-          const ctx = canvas.getContext("2d", { alpha: false });
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Compression failed")), "image/jpeg", quality);
+
+        const image =
+          new Image();
+
+        image.onerror = () => {
+          reject(
+            new Error("Could not decode image.")
+          );
         };
-        img.src = reader.result;
+
+        image.onload = () => {
+
+          let width =
+            image.naturalWidth;
+
+          let height =
+            image.naturalHeight;
+
+          const scale =
+            Math.min(
+              1,
+              maxSize / Math.max(width, height)
+            );
+
+          width =
+            Math.max(
+              1,
+              Math.round(width * scale)
+            );
+
+          height =
+            Math.max(
+              1,
+              Math.round(height * scale)
+            );
+
+          const canvas =
+            document.createElement("canvas");
+
+          canvas.width = width;
+          canvas.height = height;
+
+          const context =
+            canvas.getContext("2d");
+
+          context.fillStyle = "#ffffff";
+          context.fillRect(
+            0,
+            0,
+            width,
+            height
+          );
+
+          context.drawImage(
+            image,
+            0,
+            0,
+            width,
+            height
+          );
+
+          canvas.toBlob(
+            (blob) => {
+
+              if (!blob) {
+                reject(
+                  new Error(
+                    "Image compression failed."
+                  )
+                );
+
+                return;
+              }
+
+              resolve(blob);
+            },
+            "image/jpeg",
+            quality
+          );
+        };
+
+        image.src = reader.result;
       };
+
       reader.readAsDataURL(file);
     });
   }
 
-  function imageToDataURL(file, maxSize = 900, quality = .72) {
-    return imageToBlob(file, maxSize, quality).then((blob) => new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
+  // ============================================================
+  // BLOB → DATA URL
+  // ============================================================
+
+  function blobToDataURL(blob) {
+    return new Promise((resolve, reject) => {
+
+      const reader =
+        new FileReader();
+
+      reader.onloadend = () => {
+        resolve(reader.result);
+      };
+
+      reader.onerror = () => {
+        reject(
+          new Error(
+            "Could not convert image."
+          )
+        );
+      };
+
       reader.readAsDataURL(blob);
-    }));
-  }
-
-  function blobURL(blob) {
-    return blob instanceof Blob ? URL.createObjectURL(blob) : String(blob || "");
-  }
-
-  async function migrateOldPhotos() {
-    let old = [];
-    try { old = JSON.parse(localStorage.getItem(PHOTO_KEY) || "[]"); } catch { old = []; }
-    if (!old.length) return;
-    try {
-      const current = await idbGetAll("photos");
-      if (current.length) return;
-      for (const item of old) {
-        if (!item.data) continue;
-        try {
-          const response = await fetch(item.data);
-          const blob = await response.blob();
-          await putPhoto({ id: item.id || crypto.randomUUID(), title: item.title || "Untitled", desc: item.desc || "", blob, owner: item.owner || "Wexla Creator", created: Date.now() });
-        } catch {}
-      }
-      localStorage.removeItem(PHOTO_KEY);
-    } catch {}
-  }
-
-  async function getGalleryPhotos() {
-    await migrateOldPhotos();
-    try { return await idbGetAll("photos"); } catch { return []; }
-  }
-
-  // ============================================================
-  // INCOMING MISSIONS
-  // ============================================================
-
-  async function getMissions() {
-    try { return (await idbGetAll("missions")).sort((a, b) => b.created - a.created); }
-    catch { return []; }
-  }
-
-  function missionMatches(mission, search, maximumBudget) {
-    const searchable = `${mission.title} ${mission.desc} ${mission.email} ${mission.owner}`.toLowerCase();
-    return searchable.includes(search) && mission.budget <= maximumBudget;
-  }
-
-  async function renderTasks() {
-    const grid = $("#taskGrid");
-    if (!grid) return;
-    const search = ($("#taskSearch")?.value || "").trim().toLowerCase();
-    const maximumBudget = Number($("#budgetSlider")?.value || 10000);
-    const missions = (await getMissions()).filter((mission) => missionMatches(mission, search, maximumBudget));
-
-    if (!missions.length) {
-      grid.innerHTML = `<article class="task-card glass empty-mission"><span>INCOMING / 00</span><h4>No incoming missions yet.</h4><p>Choose Website, PPT, Video Editing, Apps or 2D Games above to publish the first client requirement.</p></article>`;
-    } else {
-      grid.innerHTML = missions.map((mission) => `
-        <article class="task-card mission-card glass" data-mission-id="${escapeHTML(mission.id)}">
-          <div class="mission-card-thumb"><span>${escapeHTML((mission.title || "MISSION").slice(0, 1).toUpperCase())}</span></div>
-          <div class="mission-card-copy">
-            <span>${escapeHTML(mission.title)} / INCOMING</span>
-            <strong class="task-budget">${money(mission.budget)}</strong>
-            <h4>${escapeHTML(mission.desc.slice(0, 78))}${mission.desc.length > 78 ? "…" : ""}</h4>
-            <p>CLIENT: ${escapeHTML(mission.email)}</p>
-            <div><span class="tag">${escapeHTML(mission.owner || "CLIENT")}</span><span class="tag">OPEN BRIEF</span></div>
-          </div>
-        </article>
-      `).join("");
-    }
-
-    const counter = $("#taskCount");
-    if (counter) counter.textContent = `${String(missions.length).padStart(2, "0")} MATCHES`;
-
-    $$(".mission-card").forEach((card) => {
-      card.onclick = () => openMission(card.dataset.missionId);
     });
   }
 
-  async function openMission(id) {
-    const mission = await idbGet("missions", id);
-    if (!mission) return;
-    $("#missionType").textContent = `${mission.title.toUpperCase()} / INCOMING MISSION`;
-    $("#missionTitle").textContent = "Client requirement";
-    $("#missionDescription").textContent = mission.desc;
-    $("#missionEmail").textContent = mission.email;
-    $("#missionPhone").textContent = mission.phone;
-    $("#missionBudget").textContent = money(mission.budget);
+  // ============================================================
+  // FILE → COMPRESSED BASE64
+  // ============================================================
 
-    const thumb = $("#missionThumb");
-    if (thumb._objectUrl) URL.revokeObjectURL(thumb._objectUrl);
-    if (mission.imageBlob) {
-      thumb._objectUrl = blobURL(mission.imageBlob);
-      thumb.src = thumb._objectUrl;
-      thumb.classList.remove("hidden");
-    } else {
-      thumb._objectUrl = "";
-      thumb.removeAttribute("src");
-      thumb.classList.add("hidden");
+  async function imageToDataURL(
+    file,
+    maxSize = 900,
+    quality = 0.72
+  ) {
+    const blob =
+      await imageToBlob(
+        file,
+        maxSize,
+        quality
+      );
+
+    return blobToDataURL(blob);
+  }
+
+  // ============================================================
+  // SAVE PHOTO TO FIRESTORE
+  // ============================================================
+
+  async function putPhoto(photo) {
+
+    const firebase =
+      await firebaseReady;
+
+    const photoId =
+      photo.id ||
+      crypto.randomUUID();
+
+    const photoRef =
+      firebase.doc(
+        firebase.db,
+        "photos",
+        photoId
+      );
+
+    const cloudPhoto = {
+      title: photo.title || "",
+      desc: photo.desc || "",
+      data: photo.data || "",
+      owner: photo.owner || "Wexla Creator",
+      created:
+        Number(photo.created) ||
+        Date.now()
+    };
+
+    assertFirestoreImageSize(
+      cloudPhoto.data
+    );
+
+    await firebase.setDoc(
+      photoRef,
+      cloudPhoto
+    );
+
+    return {
+      id: photoId,
+      ...cloudPhoto
+    };
+  }
+
+  // ============================================================
+  // SAVE MISSION TO FIRESTORE
+  // ============================================================
+
+  async function putMission(mission) {
+
+    const firebase =
+      await firebaseReady;
+
+    const missionId =
+      mission.id ||
+      crypto.randomUUID();
+
+    const missionRef =
+      firebase.doc(
+        firebase.db,
+        "missions",
+        missionId
+      );
+
+    const cloudMission = {
+      title: mission.title || "",
+      desc: mission.desc || "",
+      budget:
+        Number(mission.budget) || 0,
+      phone: mission.phone || "",
+      email: mission.email || "",
+      owner:
+        mission.owner ||
+        "Wexla Client",
+      ownerId:
+        mission.ownerId ||
+        null,
+      created:
+        Number(mission.created) ||
+        Date.now(),
+      imageData:
+        mission.imageData || ""
+    };
+
+    if (cloudMission.imageData) {
+      assertFirestoreImageSize(
+        cloudMission.imageData
+      );
     }
+
+    await firebase.setDoc(
+      missionRef,
+      cloudMission
+    );
+
+    return {
+      id: missionId,
+      ...cloudMission
+    };
+  }
+
+  // ============================================================
+  // GET MISSIONS FROM FIRESTORE
+  // ============================================================
+
+  async function getMissions() {
+
+    await startCloudListeners();
+
+    return [
+      ...cloudState.missions
+    ];
+  }
+
+  // ============================================================
+  // GET PHOTOS FROM FIRESTORE
+  // ============================================================
+
+  async function getGalleryPhotos() {
+
+    await startCloudListeners();
+
+    return [
+      ...cloudState.photos
+    ];
+  }
+
+  // ============================================================
+  // FIRESTORE REAL-TIME LISTENERS
+  // ============================================================
+
+  async function startCloudListeners() {
+
+    if (cloudState.listenersStarted) {
+      return;
+    }
+
+    cloudState.listenersStarted = true;
+
+    try {
+
+      const firebase =
+        await firebaseReady;
+
+      // --------------------------------------------------------
+      // MISSIONS
+      // --------------------------------------------------------
+
+      const missionCollection =
+        firebase.collection(
+          firebase.db,
+          "missions"
+        );
+
+      const missionQuery =
+        firebase.query(
+          missionCollection,
+          firebase.orderBy(
+            "created",
+            "desc"
+          )
+        );
+
+      cloudState.missionUnsubscribe =
+        firebase.onSnapshot(
+          missionQuery,
+
+          (snapshot) => {
+
+            cloudState.missions =
+              snapshot.docs.map(
+                (document) => ({
+                  id: document.id,
+                  ...document.data()
+                })
+              );
+
+            /*
+             * Keep the original render function alive.
+             * Only its data source is changed.
+             */
+            tasks.length = 0;
+
+            cloudState.missions.forEach(
+              (mission) => {
+
+                tasks.push({
+                  id: mission.id,
+                  title:
+                    mission.title ||
+                    "Untitled Mission",
+
+                  desc:
+                    mission.desc ||
+                    "",
+
+                  budget:
+                    Number(mission.budget) ||
+                    0,
+
+                  tags: [
+                    "INCOMING",
+                    "WEXLA"
+                  ],
+
+                  phone:
+                    mission.phone ||
+                    "",
+
+                  email:
+                    mission.email ||
+                    "",
+
+                  owner:
+                    mission.owner ||
+                    "Wexla Client",
+
+                  ownerId:
+                    mission.ownerId ||
+                    null,
+
+                  created:
+                    mission.created ||
+                    0,
+
+                  imageData:
+                    mission.imageData ||
+                    ""
+                });
+
+              }
+            );
+
+            renderTasks();
+          },
+
+          (error) => {
+
+            console.error(
+              "Wexla missions listener error:",
+              error
+            );
+
+            toast(
+              firebaseErrorMessage(error)
+            );
+          }
+        );
+
+      // --------------------------------------------------------
+      // PHOTOS
+      // --------------------------------------------------------
+
+      const photoCollection =
+        firebase.collection(
+          firebase.db,
+          "photos"
+        );
+
+      const photoQuery =
+        firebase.query(
+          photoCollection,
+          firebase.orderBy(
+            "created",
+            "desc"
+          )
+        );
+
+      cloudState.photoUnsubscribe =
+        firebase.onSnapshot(
+          photoQuery,
+
+          (snapshot) => {
+
+            cloudState.photos =
+              snapshot.docs.map(
+                (document) => ({
+                  id: document.id,
+                  ...document.data()
+                })
+              );
+
+            renderPhotos();
+          },
+
+          (error) => {
+
+            console.error(
+              "Wexla photos listener error:",
+              error
+            );
+
+            toast(
+              firebaseErrorMessage(error)
+            );
+          }
+        );
+
+    } catch (error) {
+
+      console.error(
+        "Firebase initialization error:",
+        error
+      );
+
+      cloudState.listenersStarted = false;
+
+      toast(
+        firebaseErrorMessage(error)
+      );
+    }
+  }
+
+  // ============================================================
+  // OVERRIDE LOCAL PHOTO READER WITH CLOUD DATA
+  // ============================================================
+
+  /*
+   * The old getPhotos() function is intentionally left above
+   * because other parts of the original website may still call
+   * it.
+   *
+   * This replacement returns Firestore photos.
+   */
+
+  function getCloudPhotosSync() {
+    return [
+      ...cloudState.photos
+    ];
+  }
+
+  // ============================================================
+  // PATCH PHOTO RENDERING TO CLOUD STATE
+  // ============================================================
+
+  const originalRenderPhotos =
+    renderPhotos;
+
+  renderPhotos = function () {
+
+    /*
+     * If Firebase has loaded cloud photos, render those.
+     * Otherwise allow the original empty-state renderer
+     * to work normally.
+     */
+
+    if (
+      cloudState.listenersStarted ||
+      cloudState.photos.length
+    ) {
+
+      let photos =
+        getCloudPhotosSync();
+
+      const search =
+        (
+          $("#photoSearch")?.value ||
+          ""
+        ).toLowerCase();
+
+      if (search) {
+
+        photos =
+          photos.filter((photo) => {
+
+            return (
+              (
+                photo.title ||
+                ""
+              ) +
+              " " +
+              (
+                photo.desc ||
+                ""
+              )
+            )
+              .toLowerCase()
+              .includes(search);
+
+          });
+      }
+
+      const gallery =
+        $("#photoGallery");
+
+      if (!gallery) return;
+
+      if (!photos.length) {
+
+        gallery.innerHTML = `
+          <div class="task-card glass">
+            <h4>Gallery is quiet.</h4>
+            <p>
+              Upload the first visual asset to activate
+              this exchange.
+            </p>
+          </div>
+        `;
+
+        return;
+      }
+
+      gallery.innerHTML =
+        photos.map((photo, index) => `
+
+          <article class="photo-card">
+
+            <img
+              src="${photo.data || ""}"
+              alt="${escapeHTML(
+                photo.title || "Wexla Asset"
+              )}"
+            >
+
+            <div class="photo-info">
+
+              <strong>
+                ${escapeHTML(
+                  photo.title ||
+                  "Untitled Asset"
+                )}
+              </strong>
+
+              <p>
+                ${escapeHTML(
+                  photo.desc ||
+                  "Community visual asset"
+                )}
+              </p>
+
+              <button
+                class="install-btn"
+                data-photo="${index}"
+              >
+                INSTALL / DOWNLOAD
+              </button>
+
+            </div>
+
+          </article>
+
+        `).join("");
+
+      $$("#photoGallery .install-btn")
+        .forEach((button) => {
+
+          button.onclick = () => {
+
+            const photo =
+              photos[
+                Number(
+                  button.dataset.photo
+                )
+              ];
+
+            downloadPhoto(photo);
+          };
+
+        });
+
+      return;
+    }
+
+    originalRenderPhotos();
+  };
+
+  // ============================================================
+  // PATCH MISSION DETAILS
+  // ============================================================
+
+  function openMissionDetails(id) {
+
+    const mission =
+      cloudState.missions.find(
+        (item) =>
+          item.id === id
+      );
+
+    if (!mission) {
+      toast("Mission could not be found.");
+      return;
+    }
+
+    const title =
+      $("#missionTitle");
+
+    const description =
+      $("#missionDescription");
+
+    const email =
+      $("#missionEmail");
+
+    const phone =
+      $("#missionPhone");
+
+    const budget =
+      $("#missionBudget");
+
+    const image =
+      $("#missionImage");
+
+    if (title) {
+      title.textContent =
+        mission.title ||
+        "Incoming Mission";
+    }
+
+    if (description) {
+      description.textContent =
+        mission.desc ||
+        "No description supplied.";
+    }
+
+    if (email) {
+      email.textContent =
+        mission.email ||
+        "Not supplied";
+    }
+
+    if (phone) {
+      phone.textContent =
+        mission.phone ||
+        "Not supplied";
+    }
+
+    if (budget) {
+      budget.textContent =
+        money(
+          Number(
+            mission.budget
+          ) || 0
+        );
+    }
+
+    if (image) {
+
+      if (mission.imageData) {
+
+        image.src =
+          mission.imageData;
+
+        image.classList.remove(
+          "hidden"
+        );
+
+      } else {
+
+        image.removeAttribute(
+          "src"
+        );
+
+        image.classList.add(
+          "hidden"
+        );
+      }
+    }
+
     openModal("#missionModal");
   }
 
   // ============================================================
-  // PHOTO GALLERY OVERRIDE — IndexedDB + touch friendly
+  // MISSION CLICK HANDLER
   // ============================================================
 
-  async function renderPhotos() {
-    const gallery = $("#photoGallery");
-    if (!gallery) return;
-    const search = ($("#photoSearch")?.value || "").trim().toLowerCase();
-    const photos = (await getGalleryPhotos()).filter((photo) => `${photo.title} ${photo.desc}`.toLowerCase().includes(search));
-    gallery.innerHTML = "";
+  document.addEventListener(
+    "click",
+    (event) => {
 
-    if (!photos.length) {
-      gallery.innerHTML = `<div class="task-card glass"><h4>Gallery is quiet.</h4><p>Upload the first visual asset to activate this exchange.</p></div>`;
+      const card =
+        event.target.closest(
+          "[data-mission-id]"
+        );
+
+      if (!card) return;
+
+      const id =
+        card.dataset.missionId;
+
+      if (id) {
+        openMissionDetails(id);
+      }
+    }
+  );
+
+  // ============================================================
+  // CLOUD TASK CARD RENDER PATCH
+  // ============================================================
+
+  const originalRenderTasks =
+    renderTasks;
+
+  renderTasks = function () {
+
+    if (
+      cloudState.listenersStarted ||
+      cloudState.missions.length
+    ) {
+
+      const search =
+        (
+          $("#taskSearch")?.value ||
+          ""
+        ).toLowerCase();
+
+      const maximumBudget =
+        Number(
+          $("#budgetSlider")?.value ||
+          10000
+        );
+
+      const filtered =
+        cloudState.missions.filter(
+          (mission) => {
+
+            const searchable =
+              (
+                mission.title ||
+                ""
+              ) +
+              " " +
+              (
+                mission.desc ||
+                ""
+              ) +
+              " INCOMING WEXLA";
+
+            return (
+              searchable
+                .toLowerCase()
+                .includes(search) &&
+              Number(
+                mission.budget
+              ) <= maximumBudget
+            );
+
+          }
+        );
+
+      const grid =
+        $("#taskGrid");
+
+      if (!grid) return;
+
+      if (!filtered.length) {
+
+        grid.innerHTML = `
+          <article class="task-card glass">
+            <h4>No matching missions</h4>
+            <p>
+              Try a broader search or increase
+              the regional budget.
+            </p>
+          </article>
+        `;
+
+      } else {
+
+        grid.innerHTML =
+          filtered.map(
+            (mission) => `
+
+              <article
+                class="task-card glass"
+                data-mission-id="${escapeHTML(
+                  mission.id
+                )}"
+              >
+
+                <span>
+                  INCOMING / WEXLA
+                </span>
+
+                <strong class="task-budget">
+                  ${money(
+                    Number(
+                      mission.budget
+                    ) || 0
+                  )}
+                </strong>
+
+                <h4>
+                  ${escapeHTML(
+                    mission.title ||
+                    "Untitled Mission"
+                  )}
+                </h4>
+
+                <p>
+                  ${escapeHTML(
+                    mission.desc ||
+                    "No description supplied."
+                  )}
+                </p>
+
+                <div>
+                  <span class="tag">
+                    INCOMING
+                  </span>
+
+                  <span class="tag">
+                    WEXLA
+                  </span>
+
+                  ${
+                    mission.imageData
+                      ? `
+                        <span class="tag">
+                          IMAGE
+                        </span>
+                      `
+                      : ""
+                  }
+                </div>
+
+              </article>
+
+            `
+          ).join("");
+      }
+
+      const counter =
+        $("#taskCount");
+
+      if (counter) {
+
+        counter.textContent =
+          `${String(
+            filtered.length
+          ).padStart(2, "0")} MATCHES`;
+      }
+
       return;
     }
 
-    photos.forEach((photo) => {
-      const card = document.createElement("article");
-      card.className = "photo-card";
-      const image = document.createElement("img");
-      image.alt = photo.title || "Wexla asset";
-      image.src = blobURL(photo.blob);
-      const info = document.createElement("div");
-      info.className = "photo-info";
-      const title = document.createElement("strong");
-      title.textContent = photo.title || "Untitled";
-      const desc = document.createElement("p");
-      desc.textContent = photo.desc || "Community visual asset";
-      const owner = document.createElement("small");
-      owner.textContent = `UPLOADED BY ${photo.owner || "CREATOR"}`;
-      const button = document.createElement("button");
-      button.className = "install-btn";
-      button.textContent = "INSTALL / DOWNLOAD";
-      button.onclick = () => downloadPhoto(photo);
-      info.append(title, desc, owner, button);
-      card.append(image, info);
-      gallery.append(card);
+    originalRenderTasks();
+  };
+
+  // ============================================================
+  // CLOUD DATA REFRESH
+  // ============================================================
+
+  async function refreshCloudData() {
+
+    try {
+
+      await startCloudListeners();
+
+      /*
+       * The listeners automatically update the UI whenever
+       * Firestore changes.
+       */
+
+      renderTasks();
+      renderPhotos();
+
+    } catch (error) {
+
+      console.error(
+        "Cloud refresh failed:",
+        error
+      );
+
+      toast(
+        firebaseErrorMessage(error)
+      );
+    }
+  }
+
+  // ============================================================
+  // SERVICE MODAL HELPERS
+  // ============================================================
+
+  function setupMissionInteractions() {
+
+    document.addEventListener(
+      "click",
+      (event) => {
+
+        const missionButton =
+          event.target.closest(
+            ".task-card"
+          );
+
+        if (!missionButton) return;
+
+        const id =
+          missionButton.dataset.missionId;
+
+        if (!id) return;
+
+        openMissionDetails(id);
+      }
+    );
+  }
+
+  // ============================================================
+  // PHOTO UPLOAD DRAG & DROP
+  // ============================================================
+
+  function setupPhotoDropzone() {
+
+    const dropzone =
+      document.querySelector(
+        ".dropzone"
+      );
+
+    const input =
+      $("#photoFile");
+
+    if (!dropzone || !input) {
+      return;
+    }
+
+    [
+      "dragenter",
+      "dragover"
+    ].forEach((eventName) => {
+
+      dropzone.addEventListener(
+        eventName,
+        (event) => {
+
+          event.preventDefault();
+          event.stopPropagation();
+
+          dropzone.classList.add(
+            "dragging"
+          );
+
+        }
+      );
+
+    });
+
+    [
+      "dragleave",
+      "drop"
+    ].forEach((eventName) => {
+
+      dropzone.addEventListener(
+        eventName,
+        (event) => {
+
+          event.preventDefault();
+          event.stopPropagation();
+
+          dropzone.classList.remove(
+            "dragging"
+          );
+
+        }
+      );
+
+    });
+
+    dropzone.addEventListener(
+      "drop",
+      (event) => {
+
+        const file =
+          event.dataTransfer
+            ?.files?.[0];
+
+        if (!file) return;
+
+        if (
+          !file.type.startsWith(
+            "image/"
+          )
+        ) {
+
+          toast(
+            "Please drop an image file."
+          );
+
+          return;
+        }
+
+        try {
+
+          const dataTransfer =
+            new DataTransfer();
+
+          dataTransfer.items.add(file);
+
+          input.files =
+            dataTransfer.files;
+
+          const text =
+            dropzone.querySelector(
+              "strong"
+            );
+
+          if (text) {
+            text.textContent =
+              file.name;
+          }
+
+        } catch {
+
+          toast(
+            "Could not attach the dropped image."
+          );
+        }
+      }
+    );
+
+    dropzone.addEventListener(
+      "click",
+      () => input.click()
+    );
+  }
+
+  // ============================================================
+  // MOBILE MENU
+  // ============================================================
+
+  function setupMobileMenu() {
+
+    const menuButton =
+      $("#mobileMenuBtn");
+
+    const menu =
+      $("#mobileMenu");
+
+    if (!menuButton || !menu) {
+      return;
+    }
+
+    menuButton.addEventListener(
+      "click",
+      () => {
+
+        menu.classList.toggle(
+          "open"
+        );
+
+      }
+    );
+
+    menu.querySelectorAll(
+      "[data-nav]"
+    ).forEach((button) => {
+
+      button.addEventListener(
+        "click",
+        () => {
+          menu.classList.remove(
+            "open"
+          );
+        }
+      );
+
     });
   }
 
-  function downloadPhoto(photo) {
-    if (!photo) return;
-    const url = photo.blob instanceof Blob ? URL.createObjectURL(photo.blob) : photo.data;
-    if (!url) return;
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${(photo.title || "wexla-asset").replace(/[^a-z0-9_-]+/gi, "-")}.jpg`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    if (photo.blob instanceof Blob) setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast("Asset acquisition started.");
-  }
-
   // ============================================================
-  // MOBILE GAME CONTROLLER
-  // ============================================================
-
-  function setupMobileGameControls() {
-    const controls = $("#mobileGameControls");
-    if (!controls) return;
-    controls.addEventListener("pointerdown", (event) => {
-      const button = event.target.closest("[data-key]");
-      if (!button) return;
-      event.preventDefault();
-      const key = button.dataset.key;
-      window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-      button.classList.add("pressed");
-    });
-    const release = (event) => {
-      const button = event.target.closest?.("[data-key]");
-      if (!button) return;
-      const key = button.dataset.key;
-      window.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
-      button.classList.remove("pressed");
-    };
-    controls.addEventListener("pointerup", release);
-    controls.addEventListener("pointercancel", release);
-    controls.addEventListener("pointerleave", release);
-  }
-
-  // ============================================================
-  // AMBIENT PARTICLES
+  // PARTICLE BACKGROUND
   // ============================================================
 
   function startAmbientBackground() {
 
     const canvas =
-      $("#ambientCanvas");
+      $("#particleCanvas");
 
     if (!canvas) return;
 
-    const ctx =
+    const context =
       canvas.getContext("2d");
 
-    let particles = [];
+    if (!context) return;
+
+    let width =
+      canvas.width =
+        window.innerWidth;
+
+    let height =
+      canvas.height =
+        window.innerHeight;
+
+    const particles = [];
+
+    const count =
+      Math.min(
+        80,
+        Math.max(
+          30,
+          Math.floor(
+            window.innerWidth / 18
+          )
+        )
+      );
+
+    for (
+      let i = 0;
+      i < count;
+      i++
+    ) {
+
+      particles.push({
+        x:
+          Math.random() *
+          width,
+
+        y:
+          Math.random() *
+          height,
+
+        vx:
+          (Math.random() - 0.5) *
+          0.35,
+
+        vy:
+          (Math.random() - 0.5) *
+          0.35,
+
+        r:
+          Math.random() *
+          1.8 +
+          0.5
+      });
+
+    }
 
     function resize() {
 
-      canvas.width =
-        window.innerWidth *
-        devicePixelRatio;
+      width =
+        canvas.width =
+          window.innerWidth;
 
-      canvas.height =
-        window.innerHeight *
-        devicePixelRatio;
-
-      ctx.setTransform(
-        devicePixelRatio,
-        0,
-        0,
-        devicePixelRatio,
-        0,
-        0
-      );
-
-      particles =
-        Array.from(
-          { length: 55 },
-          () => ({
-            x: Math.random() *
-              window.innerWidth,
-
-            y: Math.random() *
-              window.innerHeight,
-
-            speed:
-              (Math.random() - 0.5) *
-              0.25,
-
-            radius:
-              Math.random() * 1.7 + 0.4
-          })
-        );
+      height =
+        canvas.height =
+          window.innerHeight;
     }
-
-    resize();
 
     window.addEventListener(
       "resize",
@@ -1316,40 +2156,52 @@
 
     function animate() {
 
-      ctx.clearRect(
+      context.clearRect(
         0,
         0,
-        window.innerWidth,
-        window.innerHeight
+        width,
+        height
       );
 
-      ctx.fillStyle =
-        "rgba(0,246,255,.45)";
+      for (
+        const particle of particles
+      ) {
 
-      particles.forEach((particle) => {
+        particle.x +=
+          particle.vx;
 
-        particle.y += particle.speed;
+        particle.y +=
+          particle.vy;
 
-        if (particle.y < 0)
-          particle.y =
-            window.innerHeight;
+        if (
+          particle.x < -10 ||
+          particle.x > width + 10
+        ) {
+          particle.vx *= -1;
+        }
 
-        if (particle.y >
-          window.innerHeight)
-          particle.y = 0;
+        if (
+          particle.y < -10 ||
+          particle.y > height + 10
+        ) {
+          particle.vy *= -1;
+        }
 
-        ctx.beginPath();
+        context.beginPath();
 
-        ctx.arc(
+        context.arc(
           particle.x,
           particle.y,
-          particle.radius,
+          particle.r,
           0,
           Math.PI * 2
         );
 
-        ctx.fill();
-      });
+        context.fillStyle =
+          "rgba(120,220,255,.55)";
+
+        context.fill();
+      }
 
       requestAnimationFrame(
         animate
@@ -1358,1166 +2210,1888 @@
 
     animate();
   }
+    // ============================================================
+  // SERVICE / MISSION SUBMISSION
+  // ============================================================
+
+  function setupServiceForms() {
+
+    // ----------------------------------------------------------
+    // SERVICE CARDS
+    // ----------------------------------------------------------
+
+    $$(".service-card").forEach((card) => {
+
+      card.addEventListener(
+        "click",
+        () => {
+
+          const service =
+            card.dataset.service ||
+            card.querySelector("h3")
+              ?.textContent ||
+            "Service";
+
+          const serviceInput =
+            $("#serviceType");
+
+          if (serviceInput) {
+            serviceInput.value =
+              service;
+          }
+
+          openModal("#serviceModal");
+        }
+      );
+
+    });
+
+    // ----------------------------------------------------------
+    // SERVICE MODAL CLOSE
+    // ----------------------------------------------------------
+
+    $$("#serviceModal [data-close-modal]")
+      .forEach((button) => {
+
+        button.addEventListener(
+          "click",
+          () => {
+            closeModal("#serviceModal");
+          }
+        );
+
+      });
+
+    // ----------------------------------------------------------
+    // SERVICE FORM
+    // ----------------------------------------------------------
+
+    $("#serviceForm")?.addEventListener(
+      "submit",
+      async (event) => {
+
+        event.preventDefault();
+
+        if (!state.user) {
+          toast(
+            "Please login before submitting a mission."
+          );
+
+          return;
+        }
+
+        const submitButton =
+          $("#serviceSubmitBtn") ||
+          $("#serviceForm button[type='submit']");
+
+        const originalText =
+          submitButton?.textContent ||
+          "";
+
+        if (submitButton) {
+          submitButton.disabled = true;
+          submitButton.textContent =
+            "UPLOADING...";
+        }
+
+        try {
+
+          const service =
+            (
+              $("#serviceType")?.value ||
+              "Website"
+            ).trim();
+
+          const title =
+            (
+              $("#serviceTitle")?.value ||
+              service
+            ).trim();
+
+          const description =
+            (
+              $("#serviceDescription")?.value ||
+              $("#serviceDesc")?.value ||
+              ""
+            ).trim();
+
+          const budget =
+            Number(
+              $("#serviceBudget")?.value ||
+              $("#budgetInput")?.value ||
+              0
+            );
+
+          const phone =
+            (
+              $("#servicePhone")?.value ||
+              state.user.phone ||
+              ""
+            ).trim();
+
+          const email =
+            (
+              $("#serviceEmail")?.value ||
+              state.user.email ||
+              ""
+            ).trim();
+
+          const ideaFile =
+            $("#serviceImage")?.files?.[0] ||
+            $("#ideaImage")?.files?.[0] ||
+            null;
+
+          if (!title) {
+            toast(
+              "Please enter a mission title."
+            );
+
+            return;
+          }
+
+          if (!description) {
+            toast(
+              "Please describe what you need."
+            );
+
+            return;
+          }
+
+          if (
+            !Number.isFinite(budget) ||
+            budget < 0
+          ) {
+            toast(
+              "Please enter a valid budget."
+            );
+
+            return;
+          }
+
+          // ------------------------------------------------------
+          // OPTIONAL IMAGE → COMPRESSED BASE64
+          // ------------------------------------------------------
+
+          let imageData = "";
+
+          if (ideaFile) {
+
+            if (
+              !ideaFile.type.startsWith(
+                "image/"
+              )
+            ) {
+              toast(
+                "Mission image must be an image file."
+              );
+
+              return;
+            }
+
+            imageData =
+              await imageToDataURL(
+                ideaFile,
+                700,
+                0.68
+              );
+
+            assertFirestoreImageSize(
+              imageData
+            );
+          }
+
+          // ------------------------------------------------------
+          // CREATE CLOUD MISSION
+          // ------------------------------------------------------
+
+          const mission = {
+            id: crypto.randomUUID(),
+
+            title,
+
+            desc:
+              description,
+
+            budget,
+
+            phone,
+
+            email,
+
+            owner:
+              state.user.username,
+
+            ownerId:
+              state.user.id,
+
+            created:
+              Date.now(),
+
+            imageData
+          };
+
+          await putMission(
+            mission
+          );
+
+          // ------------------------------------------------------
+          // LOCAL CLOUD STATE UPDATE
+          // ------------------------------------------------------
+
+          const existingIndex =
+            cloudState.missions.findIndex(
+              (item) =>
+                item.id === mission.id
+            );
+
+          if (existingIndex === -1) {
+
+            cloudState.missions.unshift(
+              mission
+            );
+
+          } else {
+
+            cloudState.missions[
+              existingIndex
+            ] = mission;
+          }
+
+          renderTasks();
+
+          // ------------------------------------------------------
+          // CLOSE / RESET
+          // ------------------------------------------------------
+
+          $("#serviceForm")?.reset();
+
+          closeModal(
+            "#serviceModal"
+          );
+
+          toast(
+            "Mission published globally."
+          );
+
+        } catch (error) {
+
+          console.error(
+            "Mission submission error:",
+            error
+          );
+
+          showCloudImageError(
+            error,
+            "Mission could not be published."
+          );
+
+        } finally {
+
+          if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.textContent =
+              originalText ||
+              "SUBMIT MISSION";
+          }
+
+        }
+      }
+    );
+  }
 
   // ============================================================
-  // GAME ENGINE
+  // PHOTO SUBMISSION
   // ============================================================
 
-  function launchGame(id) {
+  function setupPhotoUpload() {
 
-    if (state.gameCleanup) {
-      state.gameCleanup();
-    }
+    const form =
+      $("#photoForm");
 
-    state.game = id;
+    if (!form) return;
+
+    form.addEventListener(
+      "submit",
+      async (event) => {
+
+        event.preventDefault();
+
+        if (!state.user) {
+          toast(
+            "Please login before uploading."
+          );
+
+          return;
+        }
+
+        const submitButton =
+          form.querySelector(
+            "button[type='submit']"
+          );
+
+        const originalText =
+          submitButton?.textContent ||
+          "";
+
+        if (submitButton) {
+          submitButton.disabled = true;
+          submitButton.textContent =
+            "COMPRESSING...";
+        }
+
+        try {
+
+          const title =
+            (
+              $("#photoTitle")?.value ||
+              "Wexla Asset"
+            ).trim();
+
+          const desc =
+            (
+              $("#photoDescription")?.value ||
+              $("#photoDesc")?.value ||
+              ""
+            ).trim();
+
+          const file =
+            $("#photoFile")?.files?.[0];
+
+          if (!file) {
+
+            toast(
+              "Please select an image."
+            );
+
+            return;
+          }
+
+          if (
+            !file.type.startsWith(
+              "image/"
+            )
+          ) {
+
+            toast(
+              "Only image files are supported."
+            );
+
+            return;
+          }
+
+          // ------------------------------------------------------
+          // IMAGE → COMPRESSED BASE64
+          // ------------------------------------------------------
+
+          if (submitButton) {
+            submitButton.textContent =
+              "UPLOADING...";
+          }
+
+          const data =
+            await imageToDataURL(
+              file,
+              900,
+              0.68
+            );
+
+          assertFirestoreImageSize(
+            data
+          );
+
+          // ------------------------------------------------------
+          // CREATE CLOUD PHOTO
+          // ------------------------------------------------------
+
+          const photo = {
+            id:
+              crypto.randomUUID(),
+
+            title,
+
+            desc,
+
+            data,
+
+            owner:
+              state.user.username,
+
+            created:
+              Date.now()
+          };
+
+          await putPhoto(
+            photo
+          );
+
+          // ------------------------------------------------------
+          // UPDATE CURRENT CLOUD STATE
+          // ------------------------------------------------------
+
+          const existingIndex =
+            cloudState.photos.findIndex(
+              (item) =>
+                item.id === photo.id
+            );
+
+          if (existingIndex === -1) {
+
+            cloudState.photos.unshift(
+              photo
+            );
+
+          } else {
+
+            cloudState.photos[
+              existingIndex
+            ] = photo;
+          }
+
+          renderPhotos();
+
+          form.reset();
+
+          const dropzone =
+            document.querySelector(
+              ".dropzone"
+            );
+
+          const filename =
+            dropzone?.querySelector(
+              "strong"
+            );
+
+          if (filename) {
+            filename.textContent =
+              "DROP IMAGE OR CLICK TO UPLOAD";
+          }
+
+          closeModal(
+            "#photoModal"
+          );
+
+          toast(
+            "Image uploaded globally."
+          );
+
+        } catch (error) {
+
+          console.error(
+            "Photo upload error:",
+            error
+          );
+
+          showCloudImageError(
+            error,
+            "Image upload failed."
+          );
+
+        } finally {
+
+          if (submitButton) {
+            submitButton.disabled = false;
+
+            submitButton.textContent =
+              originalText ||
+              "UPLOAD IMAGE";
+          }
+
+        }
+      }
+    );
+  }
+
+  // ============================================================
+  // GENERIC PHOTO MODAL
+  // ============================================================
+
+  function setupPhotoModal() {
+
+    const openButtons =
+      $$("[data-open-photo-modal]");
+
+    openButtons.forEach(
+      (button) => {
+
+        button.addEventListener(
+          "click",
+          () => {
+            openModal(
+              "#photoModal"
+            );
+          }
+        );
+
+      }
+    );
+
+    $$("#photoModal [data-close-modal]")
+      .forEach((button) => {
+
+        button.addEventListener(
+          "click",
+          () => {
+            closeModal(
+              "#photoModal"
+            );
+          }
+        );
+
+      });
+  }
+
+  // ============================================================
+  // SEARCH
+  // ============================================================
+
+  function setupSearch() {
+
+    $("#taskSearch")?.addEventListener(
+      "input",
+      () => {
+        renderTasks();
+      }
+    );
+
+    $("#photoSearch")?.addEventListener(
+      "input",
+      () => {
+        renderPhotos();
+      }
+    );
+
+    $("#budgetSlider")?.addEventListener(
+      "input",
+      () => {
+        updateBudget();
+        renderTasks();
+      }
+    );
+
+    // ----------------------------------------------------------
+    // GLOBAL SERVICE SEARCH
+    // ----------------------------------------------------------
+
+    $("#globalSearch")?.addEventListener(
+      "input",
+      (event) => {
+
+        const value =
+          event.target.value
+            .trim()
+            .toLowerCase();
+
+        $$(".service-card, .tool-card, .game-card")
+          .forEach((card) => {
+
+            const text =
+              card.textContent
+                .toLowerCase();
+
+            card.style.display =
+              !value ||
+              text.includes(value)
+                ? ""
+                : "none";
+
+          });
+      }
+    );
+  }
+
+  // ============================================================
+  // MODAL OUTSIDE CLICK
+  // ============================================================
+
+  function setupModalDismiss() {
+
+    document.addEventListener(
+      "click",
+      (event) => {
+
+        const modal =
+          event.target.closest(
+            ".modal"
+          );
+
+        if (!modal) return;
+
+        if (
+          event.target === modal ||
+          event.target.matches(
+            ".modal-backdrop"
+          )
+        ) {
+
+          modal.classList.remove(
+            "open"
+          );
+
+        }
+      }
+    );
+
+    document.addEventListener(
+      "keydown",
+      (event) => {
+
+        if (
+          event.key !== "Escape"
+        ) {
+          return;
+        }
+
+        $$(".modal.open")
+          .forEach((modal) => {
+            modal.classList.remove(
+              "open"
+            );
+          });
+
+        $("#profilePanel")
+          ?.classList.remove(
+            "open"
+          );
+
+        $("#panelBackdrop")
+          ?.classList.remove(
+            "open"
+          );
+      }
+    );
+  }
+
+  // ============================================================
+  // PROFILE EDIT
+  // ============================================================
+
+  function setupProfileEditing() {
+
+    $("#profileForm")?.addEventListener(
+      "submit",
+      (event) => {
+
+        event.preventDefault();
+
+        if (!state.user) return;
+
+        const username =
+          (
+            $("#profileUsername")?.value ||
+            state.user.username
+          ).trim();
+
+        const country =
+          (
+            $("#profileCountry")?.value ||
+            state.user.country
+          ).trim();
+
+        const phone =
+          (
+            $("#profilePhone")?.value ||
+            state.user.phone ||
+            ""
+          ).trim();
+
+        const entity =
+          (
+            $("#profileEntity")?.value ||
+            state.user.entity
+          ).trim();
+
+        if (!username) {
+          toast(
+            "Username cannot be empty."
+          );
+
+          return;
+        }
+
+        const users =
+          getUsers();
+
+        const duplicate =
+          users.some(
+            (user) =>
+              user.id !== state.user.id &&
+              user.username
+                .toLowerCase() ===
+                username.toLowerCase()
+          );
+
+        if (duplicate) {
+
+          toast(
+            "That username is already taken."
+          );
+
+          return;
+        }
+
+        state.user.username =
+          username;
+
+        state.user.country =
+          country;
+
+        state.user.phone =
+          phone;
+
+        state.user.entity =
+          entity;
+
+        const index =
+          users.findIndex(
+            (user) =>
+              user.id === state.user.id
+          );
+
+        if (index !== -1) {
+          users[index] =
+            state.user;
+
+          saveUsers(users);
+        }
+
+        renderProfile();
+
+        toast(
+          "Profile updated."
+        );
+      }
+    );
+  }
+
+  // ============================================================
+  // HOME / SECTION BUTTONS
+  // ============================================================
+
+  function setupSectionButtons() {
+
+    $$("[data-scroll-to]").forEach(
+      (button) => {
+
+        button.addEventListener(
+          "click",
+          () => {
+
+            const target =
+              document.querySelector(
+                button.dataset.scrollTo
+              );
+
+            target?.scrollIntoView({
+              behavior: "smooth",
+              block: "start"
+            });
+
+          }
+        );
+
+      }
+    );
+
+    // Generic "open modal" buttons
+    $$("[data-open-modal]").forEach(
+      (button) => {
+
+        button.addEventListener(
+          "click",
+          () => {
+
+            const target =
+              button.dataset.openModal;
+
+            if (!target) return;
+
+            openModal(target);
+          }
+        );
+
+      }
+    );
+
+    // Generic "close modal" buttons
+    $$("[data-close-modal]").forEach(
+      (button) => {
+
+        button.addEventListener(
+          "click",
+          () => {
+
+            const modal =
+              button.closest(
+                ".modal"
+              );
+
+            if (modal) {
+              modal.classList.remove(
+                "open"
+              );
+            }
+
+          }
+        );
+
+      }
+    );
+  }
+
+  // ============================================================
+  // FILE PREVIEW
+  // ============================================================
+
+  function setupImagePreview() {
+
+    const selectors = [
+      "#photoFile",
+      "#serviceImage",
+      "#ideaImage"
+    ];
+
+    selectors.forEach(
+      (selector) => {
+
+        const input =
+          $(selector);
+
+        if (!input) return;
+
+        input.addEventListener(
+          "change",
+          () => {
+
+            const file =
+              input.files?.[0];
+
+            if (!file) return;
+
+            if (
+              !file.type.startsWith(
+                "image/"
+              )
+            ) {
+              return;
+            }
+
+            const reader =
+              new FileReader();
+
+            reader.onload = () => {
+
+              const previewId =
+                input.dataset.preview;
+
+              if (!previewId) {
+                return;
+              }
+
+              const preview =
+                document.querySelector(
+                  previewId
+                );
+
+              if (!preview) {
+                return;
+              }
+
+              preview.src =
+                reader.result;
+
+              preview.classList.remove(
+                "hidden"
+              );
+            };
+
+            reader.readAsDataURL(
+              file
+            );
+          }
+        );
+
+      }
+    );
+  }
+
+  // ============================================================
+  // COPY BUTTONS
+  // ============================================================
+
+  function setupCopyButtons() {
+
+    $$("[data-copy]").forEach(
+      (button) => {
+
+        button.addEventListener(
+          "click",
+          async () => {
+
+            const selector =
+              button.dataset.copy;
+
+            const element =
+              selector
+                ? document.querySelector(
+                    selector
+                  )
+                : null;
+
+            if (!element) return;
+
+            const text =
+              element.value ??
+              element.textContent ??
+              "";
+
+            try {
+
+              await navigator.clipboard.writeText(
+                text
+              );
+
+              toast(
+                "Copied to clipboard."
+              );
+
+            } catch {
+
+              toast(
+                "Copy failed."
+              );
+            }
+          }
+        );
+
+      }
+    );
+  }
+
+  // ============================================================
+  // TAB SYSTEM
+  // ============================================================
+
+  function setupTabs() {
+
+    $$("[data-tab-target]").forEach(
+      (button) => {
+
+        button.addEventListener(
+          "click",
+          () => {
+
+            const target =
+              button.dataset.tabTarget;
+
+            if (!target) return;
+
+            const parent =
+              button.closest(
+                ".tabs, .tab-container"
+              );
+
+            parent
+              ?.querySelectorAll(
+                "[data-tab-target]"
+              )
+              .forEach((item) => {
+                item.classList.remove(
+                  "active"
+                );
+              });
+
+            button.classList.add(
+              "active"
+            );
+
+            const container =
+              button.closest(
+                "section, .panel, .tab-container"
+              ) ||
+              document;
+
+            container
+              .querySelectorAll(
+                "[data-tab]"
+              )
+              .forEach((panel) => {
+
+                panel.classList.toggle(
+                  "active",
+                  panel.dataset.tab ===
+                    target
+                );
+
+              });
+          }
+        );
+
+      }
+    );
+  }
+
+  // ============================================================
+  // NOTIFICATION DOT
+  // ============================================================
+
+  function updateMissionNotification() {
+
+    const badge =
+      $("#missionBadge");
+
+    if (!badge) return;
+
+    const count =
+      cloudState.missions.length;
+
+    badge.textContent =
+      count > 99
+        ? "99+"
+        : String(count);
+
+    badge.classList.toggle(
+      "hidden",
+      count === 0
+    );
+  }
+
+  // ============================================================
+  // FIREBASE LISTENER WRAPPER
+  // ============================================================
+
+  const originalStartCloudListeners =
+    startCloudListeners;
+
+  startCloudListeners =
+    async function () {
+
+      await originalStartCloudListeners();
+
+      updateMissionNotification();
+
+      /*
+       * Firebase onSnapshot callbacks will call the
+       * render functions whenever another user uploads
+       * a mission or image.
+       */
+    };
+
+  // ============================================================
+  // KEEP NOTIFICATION UPDATED
+  // ============================================================
+
+  const originalRenderCloudTasks =
+    renderTasks;
+
+  renderTasks =
+    function () {
+
+      originalRenderCloudTasks();
+
+      updateMissionNotification();
+    };
+
+  // ============================================================
+  // SERVICE CARD FALLBACK HANDLER
+  // ============================================================
+
+  function setupServiceCardFallback() {
+
+    document.addEventListener(
+      "click",
+      (event) => {
+
+        const card =
+          event.target.closest(
+            "[data-service]"
+          );
+
+        if (!card) return;
+
+        const service =
+          card.dataset.service;
+
+        if (!service) return;
+
+        const input =
+          $("#serviceType");
+
+        if (input) {
+          input.value =
+            service;
+        }
+      }
+    );
+  }
+
+  // ============================================================
+  // ONLINE / OFFLINE STATUS
+  // ============================================================
+
+  function setupNetworkStatus() {
+
+    const update = () => {
+
+      const indicator =
+        $("#networkStatus");
+
+      if (!indicator) return;
+
+      if (navigator.onLine) {
+
+        indicator.textContent =
+          "ONLINE";
+
+        indicator.classList.remove(
+          "offline"
+        );
+
+      } else {
+
+        indicator.textContent =
+          "OFFLINE";
+
+        indicator.classList.add(
+          "offline"
+        );
+      }
+    };
+
+    window.addEventListener(
+      "online",
+      () => {
+
+        update();
+
+        toast(
+          "Connection restored."
+        );
+
+        refreshCloudData();
+      }
+    );
+
+    window.addEventListener(
+      "offline",
+      () => {
+
+        update();
+
+        toast(
+          "You are currently offline."
+        );
+      }
+    );
+
+    update();
+  }
+
+  // ============================================================
+  // GAME ENGINE BASE
+  // ============================================================
+
+  function launchGame(gameName) {
 
     const game =
-      games.find((item) => item[0] === id);
+      games.find(
+        (item) =>
+          item[0] === gameName
+      );
 
     if (!game) return;
 
-    $("#gameTitle").textContent =
-      game[1];
-
-    $("#gameHint").textContent =
-      game[3];
-
-    $("#gameScore").textContent =
-      "SCORE 0";
-
-    openModal("#gameModal");
-
-    resizeGameCanvas();
-
-    startGame(id);
-  }
-
-  function resizeGameCanvas() {
+    const overlay =
+      $("#gameOverlay");
 
     const canvas =
       $("#gameCanvas");
 
-    if (!canvas) return;
+    if (!overlay || !canvas) {
+      toast(
+        `${game[1]} selected.`
+      );
 
-    const ratio =
-      window.devicePixelRatio || 1;
+      return;
+    }
 
-    const rect =
-      canvas.getBoundingClientRect();
+    overlay.classList.add(
+      "open"
+    );
 
-    canvas.width =
-      rect.width * ratio;
+    const title =
+      $("#gameTitle");
 
-    canvas.height =
-      rect.height * ratio;
+    if (title) {
+      title.textContent =
+        game[1];
+    }
 
-    const ctx =
+    if (
+      typeof state.gameCleanup ===
+      "function"
+    ) {
+      state.gameCleanup();
+      state.gameCleanup = null;
+    }
+
+    state.game =
+      gameName;
+
+    const context =
       canvas.getContext("2d");
 
-    ctx.setTransform(
-      ratio,
-      0,
-      0,
-      ratio,
-      0,
-      0
+    if (!context) return;
+
+    canvas.width =
+      Math.min(
+        900,
+        Math.max(
+          320,
+          window.innerWidth - 40
+        )
+      );
+
+    canvas.height =
+      Math.min(
+        600,
+        Math.max(
+          420,
+          window.innerHeight - 180
+        )
+      );
+
+    startSelectedGame(
+      gameName,
+      canvas,
+      context
     );
   }
 
-  function gameScore(value) {
-    $("#gameScore").textContent =
-      "SCORE " + Math.floor(value);
+  // ============================================================
+  // CLOSE GAME
+  // ============================================================
+
+  function closeGame() {
+
+    if (
+      typeof state.gameCleanup ===
+      "function"
+    ) {
+      state.gameCleanup();
+      state.gameCleanup = null;
+    }
+
+    state.game = null;
+
+    $("#gameOverlay")
+      ?.classList.remove(
+        "open"
+      );
   }
 
-  function startGame(id) {
+  // ============================================================
+  // GAME CLOSE BUTTON
+  // ============================================================
 
-    const canvas =
-      $("#gameCanvas");
+  function setupGameControls() {
 
-    const ctx =
-      canvas.getContext("2d");
+    $("#gameClose")?.addEventListener(
+      "click",
+      closeGame
+    );
 
-    const width =
-      () => canvas.clientWidth;
+    $("#gameOverlay")?.addEventListener(
+      "click",
+      (event) => {
 
-    const height =
-      () => canvas.clientHeight;
+        if (
+          event.target.id ===
+          "gameOverlay"
+        ) {
+          closeGame();
+        }
+      }
+    );
 
-    let animationFrame;
+    document.addEventListener(
+      "keydown",
+      (event) => {
 
-    const keys = {};
+        if (
+          event.key === "Escape" &&
+          $("#gameOverlay")
+            ?.classList.contains("open")
+        ) {
+          closeGame();
+        }
+      }
+    );
+  }
 
-    const pointer = {
-      x: 0,
-      y: 0,
-      down: false
-    };
+  // ============================================================
+  // GAME SELECTOR
+  // ============================================================
 
-    const keyDown = (event) => {
-      keys[event.key.toLowerCase()] = true;
+  function startSelectedGame(
+    gameName,
+    canvas,
+    context
+  ) {
 
-      if (event.key === " ") {
-        keys.space = true;
+    switch (gameName) {
+
+      case "snake":
+        startSnakeGame(
+          canvas,
+          context
+        );
+        break;
+
+      case "flappy":
+        startFlappyGame(
+          canvas,
+          context
+        );
+        break;
+
+      case "racing":
+        startRacingGame(
+          canvas,
+          context
+        );
+        break;
+
+      case "fruit":
+        startFruitGame(
+          canvas,
+          context
+        );
+        break;
+
+      case "runner":
+        startRunnerGame(
+          canvas,
+          context
+        );
+        break;
+
+      case "ttt":
+        startTicTacToeGame(
+          canvas,
+          context
+        );
+        break;
+
+      case "tetris":
+        startTetrisGame(
+          canvas,
+          context
+        );
+        break;
+
+      case "invaders":
+        startInvadersGame(
+          canvas,
+          context
+        );
+        break;
+
+      case "breakout":
+        startBreakoutGame(
+          canvas,
+          context
+        );
+        break;
+
+      case "pacman":
+        startPacmanGame(
+          canvas,
+          context
+        );
+        break;
+
+      default:
+        toast(
+          "Game engine unavailable."
+        );
+    }
+  }
+
+  // ============================================================
+  // GAME UTILITY
+  // ============================================================
+
+  function gameLoop(
+    callback
+  ) {
+
+    let running = true;
+    let animationId = null;
+
+    function frame(time) {
+
+      if (!running) return;
+
+      callback(time);
+
+      animationId =
+        requestAnimationFrame(
+          frame
+        );
+    }
+
+    animationId =
+      requestAnimationFrame(
+        frame
+      );
+
+    return () => {
+
+      running = false;
+
+      if (
+        animationId !== null
+      ) {
+        cancelAnimationFrame(
+          animationId
+        );
       }
     };
+  }
 
-    const keyUp = (event) => {
-      keys[event.key.toLowerCase()] = false;
+  function randomInt(
+    minimum,
+    maximum
+  ) {
+    return Math.floor(
+      Math.random() *
+      (maximum - minimum + 1)
+    ) + minimum;
+  }
 
-      if (event.key === " ") {
-        keys.space = false;
+  function clamp(
+    value,
+    minimum,
+    maximum
+  ) {
+    return Math.max(
+      minimum,
+      Math.min(
+        maximum,
+        value
+      )
+    );
+  }
+
+  // ============================================================
+  // SNAKE GAME
+  // ============================================================
+
+  function startSnakeGame(
+    canvas,
+    context
+  ) {
+
+    const gridSize = 24;
+
+    const columns =
+      Math.floor(
+        canvas.width /
+        gridSize
+      );
+
+    const rows =
+      Math.floor(
+        canvas.height /
+        gridSize
+      );
+
+    let snake = [
+      {
+        x: Math.floor(columns / 2),
+        y: Math.floor(rows / 2)
+      },
+      {
+        x: Math.floor(columns / 2) - 1,
+        y: Math.floor(rows / 2)
+      },
+      {
+        x: Math.floor(columns / 2) - 2,
+        y: Math.floor(rows / 2)
       }
+    ];
+
+    let direction = {
+      x: 1,
+      y: 0
     };
 
-    const pointerDown = (event) => {
-
-      pointer.down = true;
-
-      const rect =
-        canvas.getBoundingClientRect();
-
-      pointer.x =
-        event.clientX - rect.left;
-
-      pointer.y =
-        event.clientY - rect.top;
+    let nextDirection = {
+      x: 1,
+      y: 0
     };
 
-    const pointerMove = (event) => {
-
-      const rect =
-        canvas.getBoundingClientRect();
-
-      pointer.x =
-        event.clientX - rect.left;
-
-      pointer.y =
-        event.clientY - rect.top;
+    let food = {
+      x: randomInt(
+        1,
+        columns - 2
+      ),
+      y: randomInt(
+        1,
+        rows - 2
+      )
     };
+
+    let score = 0;
+    let accumulator = 0;
+    let lastTime = 0;
+
+    function placeFood() {
+
+      let valid = false;
+
+      while (!valid) {
+
+        food = {
+          x: randomInt(
+            1,
+            columns - 2
+          ),
+          y: randomInt(
+            1,
+            rows - 2
+          )
+        };
+
+        valid =
+          !snake.some(
+            (segment) =>
+              segment.x === food.x &&
+              segment.y === food.y
+          );
+      }
+    }
+
+    function keyHandler(event) {
+
+      const key =
+        event.key.toLowerCase();
+
+      if (
+        (
+          key === "arrowup" ||
+          key === "w"
+        ) &&
+        direction.y !== 1
+      ) {
+
+        nextDirection = {
+          x: 0,
+          y: -1
+        };
+
+      } else if (
+        (
+          key === "arrowdown" ||
+          key === "s"
+        ) &&
+        direction.y !== -1
+      ) {
+
+        nextDirection = {
+          x: 0,
+          y: 1
+        };
+
+      } else if (
+        (
+          key === "arrowleft" ||
+          key === "a"
+        ) &&
+        direction.x !== 1
+      ) {
+
+        nextDirection = {
+          x: -1,
+          y: 0
+        };
+
+      } else if (
+        (
+          key === "arrowright" ||
+          key === "d"
+        ) &&
+        direction.x !== -1
+      ) {
+
+        nextDirection = {
+          x: 1,
+          y: 0
+        };
+      }
+    }
 
     window.addEventListener(
       "keydown",
-      keyDown
+      keyHandler
     );
 
-    window.addEventListener(
-      "keyup",
-      keyUp
-    );
+    function reset() {
 
-    canvas.addEventListener(
-      "pointerdown",
-      pointerDown
-    );
+      snake = [
+        {
+          x: Math.floor(columns / 2),
+          y: Math.floor(rows / 2)
+        },
+        {
+          x: Math.floor(columns / 2) - 1,
+          y: Math.floor(rows / 2)
+        }
+      ];
 
-    canvas.addEventListener(
-      "pointermove",
-      pointerMove
-    );
+      direction = {
+        x: 1,
+        y: 0
+      };
 
-    function cleanup() {
+      nextDirection = {
+        x: 1,
+        y: 0
+      };
 
-      cancelAnimationFrame(
-        animationFrame
-      );
+      score = 0;
 
-      window.removeEventListener(
-        "keydown",
-        keyDown
-      );
-
-      window.removeEventListener(
-        "keyup",
-        keyUp
-      );
-
-      canvas.removeEventListener(
-        "pointerdown",
-        pointerDown
-      );
-
-      canvas.removeEventListener(
-        "pointermove",
-        pointerMove
-      );
+      placeFood();
     }
 
-    state.gameCleanup =
-      cleanup;
+    function update() {
 
-    function background() {
+      direction = nextDirection;
 
-      const w = width();
-      const h = height();
+      const head = {
+        x:
+          snake[0].x +
+          direction.x,
 
-      ctx.fillStyle =
-        "#03060c";
+        y:
+          snake[0].y +
+          direction.y
+      };
 
-      ctx.fillRect(
-        0,
-        0,
-        w,
-        h
+      if (
+        head.x < 0 ||
+        head.x >= columns ||
+        head.y < 0 ||
+        head.y >= rows
+      ) {
+
+        reset();
+
+        return;
+      }
+
+      if (
+        snake.some(
+          (segment) =>
+            segment.x === head.x &&
+            segment.y === head.y
+        )
+      ) {
+
+        reset();
+
+        return;
+      }
+
+      snake.unshift(
+        head
       );
 
-      ctx.strokeStyle =
-        "rgba(0,246,255,.06)";
+      if (
+        head.x === food.x &&
+        head.y === food.y
+      ) {
+
+        score++;
+
+        placeFood();
+
+      } else {
+
+        snake.pop();
+      }
+    }
+
+    function draw() {
+
+      context.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      context.fillStyle =
+        "rgba(5,10,18,.95)";
+
+      context.fillRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      // Grid
+      context.strokeStyle =
+        "rgba(255,255,255,.04)";
+
+      context.lineWidth = 1;
 
       for (
         let x = 0;
-        x < w;
-        x += 40
+        x <= columns;
+        x++
       ) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-        ctx.stroke();
+
+        context.beginPath();
+
+        context.moveTo(
+          x * gridSize,
+          0
+        );
+
+        context.lineTo(
+          x * gridSize,
+          canvas.height
+        );
+
+        context.stroke();
       }
 
       for (
         let y = 0;
-        y < h;
-        y += 40
+        y <= rows;
+        y++
       ) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-        ctx.stroke();
-      }
-    }
 
-    // ========================================================
-    // TIC TAC TOE
-    // ========================================================
+        context.beginPath();
 
-    if (id === "ttt") {
+        context.moveTo(
+          0,
+          y * gridSize
+        );
 
-      let board =
-        Array(9).fill("");
+        context.lineTo(
+          canvas.width,
+          y * gridSize
+        );
 
-      let gameOver = false;
-
-      function winner() {
-
-        const combinations = [
-          [0,1,2],
-          [3,4,5],
-          [6,7,8],
-          [0,3,6],
-          [1,4,7],
-          [2,5,8],
-          [0,4,8],
-          [2,4,6]
-        ];
-
-        for (const combination of combinations) {
-
-          const [a,b,c] =
-            combination;
-
-          if (
-            board[a] &&
-            board[a] === board[b] &&
-            board[b] === board[c]
-          ) {
-            return board[a];
-          }
-        }
-
-        if (board.every(Boolean))
-          return "DRAW";
-
-        return null;
+        context.stroke();
       }
 
-      function aiMove() {
+      // Food
+      context.beginPath();
 
-        if (gameOver) return;
-
-        const empty =
-          board
-            .map((value,index) =>
-              value ? null : index
-            )
-            .filter(
-              (value) =>
-                value !== null
-            );
-
-        if (!empty.length) return;
-
-        // Try to win
-        for (const index of empty) {
-
-          board[index] = "O";
-
-          if (winner() === "O")
-            return;
-
-          board[index] = "";
-        }
-
-        // Block player
-        for (const index of empty) {
-
-          board[index] = "X";
-
-          if (winner() === "X") {
-            board[index] = "O";
-            return;
-          }
-
-          board[index] = "";
-        }
-
-        if (!board[4]) {
-          board[4] = "O";
-          return;
-        }
-
-        const random =
-          empty[
-            Math.floor(
-              Math.random() *
-              empty.length
-            )
-          ];
-
-        board[random] = "O";
-      }
-
-      const click =
-        (event) => {
-
-          if (gameOver) return;
-
-          const rect =
-            canvas.getBoundingClientRect();
-
-          const x =
-            event.clientX -
-            rect.left;
-
-          const y =
-            event.clientY -
-            rect.top;
-
-          const size =
-            Math.min(width(), height()) /
-            3;
-
-          const offsetX =
-            (width() - size * 3) / 2;
-
-          const offsetY =
-            (height() - size * 3) / 2;
-
-          const col =
-            Math.floor(
-              (x - offsetX) / size
-            );
-
-          const row =
-            Math.floor(
-              (y - offsetY) / size
-            );
-
-          const index =
-            row * 3 + col;
-
-          if (
-            index < 0 ||
-            index > 8 ||
-            board[index]
-          ) return;
-
-          board[index] = "X";
-
-          if (winner()) {
-            gameOver = true;
-            return;
-          }
-
-          setTimeout(() => {
-
-            aiMove();
-
-            if (winner()) {
-              gameOver = true;
-            }
-
-          }, 220);
-        };
-
-      canvas.addEventListener(
-        "pointerdown",
-        click
+      context.arc(
+        food.x * gridSize +
+          gridSize / 2,
+        food.y * gridSize +
+          gridSize / 2,
+        gridSize * 0.35,
+        0,
+        Math.PI * 2
       );
 
-      state.gameCleanup = () => {
-        cleanup();
+      context.fillStyle =
+        "#ff4d9d";
 
-        canvas.removeEventListener(
-          "pointerdown",
-          click
-        );
-      };
+      context.fill();
 
-      function draw() {
+      // Snake
+      snake.forEach(
+        (segment, index) => {
 
-        background();
+          context.fillStyle =
+            index === 0
+              ? "#65f5ff"
+              : "#42b8d1";
 
-        const size =
-          Math.min(width(), height()) /
-          3;
+          context.fillRect(
+            segment.x *
+              gridSize +
+              2,
 
-        const ox =
-          (width() - size * 3) / 2;
+            segment.y *
+              gridSize +
+              2,
 
-        const oy =
-          (height() - size * 3) / 2;
-
-        ctx.strokeStyle =
-          "rgba(0,246,255,.6)";
-
-        ctx.lineWidth = 2;
-
-        for (let i = 1; i < 3; i++) {
-
-          ctx.beginPath();
-
-          ctx.moveTo(
-            ox + i * size,
-            oy
+            gridSize - 4,
+            gridSize - 4
           );
 
-          ctx.lineTo(
-            ox + i * size,
-            oy + size * 3
-          );
-
-          ctx.moveTo(
-            ox,
-            oy + i * size
-          );
-
-          ctx.lineTo(
-            ox + size * 3,
-            oy + i * size
-          );
-
-          ctx.stroke();
         }
+      );
 
-        board.forEach((value,index) => {
+      context.fillStyle =
+        "#ffffff";
 
-          if (!value) return;
+      context.font =
+        "bold 18px system-ui";
 
-          ctx.fillStyle =
-            value === "X"
-              ? "#00f6ff"
-              : "#ff3fb4";
+      context.fillText(
+        `SCORE: ${score}`,
+        16,
+        28
+      );
+    }
 
-          ctx.font =
-            `900 ${size * .55}px Segoe UI`;
+    function animate(time) {
 
-          ctx.textAlign =
-            "center";
+      if (!lastTime) {
+        lastTime = time;
+      }
 
-          ctx.fillText(
-            value,
-            ox + (index % 3 + .5) * size,
-            oy +
-              (Math.floor(index / 3) + .68) *
-              size
-          );
-        });
+      const delta =
+        time - lastTime;
 
-        ctx.textAlign = "left";
+      lastTime = time;
 
-        const result =
-          winner();
+      accumulator += delta;
 
-        if (result) {
+      if (accumulator >= 110) {
 
-          gameOver = true;
+        update();
 
-          ctx.fillStyle =
-            "#00f6ff";
-
-          ctx.font =
-            "900 20px Segoe UI";
-
-          ctx.fillText(
-            result === "DRAW"
-              ? "DRAW"
-              : result + " WINS",
-            width() / 2 - 40,
-            height() - 25
-          );
-
-          gameScore(
-            result === "X"
-              ? 100
-              : 0
-          );
-        }
-
-        animationFrame =
-          requestAnimationFrame(draw);
+        accumulator = 0;
       }
 
       draw();
 
-      return;
+      animationFrame =
+        requestAnimationFrame(
+          animate
+        );
     }
 
-    // ========================================================
-    // SNAKE
-    // ========================================================
-
-    if (id === "snake") {
-
-      const grid = 20;
-
-      let snake = [
-        {x:8,y:8},
-        {x:7,y:8},
-        {x:6,y:8}
-      ];
-
-      let direction =
-        {x:1,y:0};
-
-      let nextDirection =
-        {x:1,y:0};
-
-      let food =
-        {x:14,y:9};
-
-      let points = 0;
-      let lastTime = 0;
-
-      function placeFood() {
-
-        food = {
-          x:
-            Math.floor(
-              Math.random() * grid
-            ),
-
-          y:
-            Math.floor(
-              Math.random() * grid
-            )
-        };
-      }
-
-      const directionKey =
-        (event) => {
-
-          const key =
-            event.key.toLowerCase();
-
-          if (
-            key === "arrowup" ||
-            key === "w"
-          ) {
-            if (direction.y === 0)
-              nextDirection =
-                {x:0,y:-1};
-          }
-
-          if (
-            key === "arrowdown" ||
-            key === "s"
-          ) {
-            if (direction.y === 0)
-              nextDirection =
-                {x:0,y:1};
-          }
-
-          if (
-            key === "arrowleft" ||
-            key === "a"
-          ) {
-            if (direction.x === 0)
-              nextDirection =
-                {x:-1,y:0};
-          }
-
-          if (
-            key === "arrowright" ||
-            key === "d"
-          ) {
-            if (direction.x === 0)
-              nextDirection =
-                {x:1,y:0};
-          }
-        };
-
-      window.addEventListener(
-        "keydown",
-        directionKey
+    let animationFrame =
+      requestAnimationFrame(
+        animate
       );
 
-      state.gameCleanup = () => {
-        cleanup();
+    state.gameCleanup =
+      () => {
+
+        cancelAnimationFrame(
+          animationFrame
+        );
 
         window.removeEventListener(
           "keydown",
-          directionKey
+          keyHandler
         );
       };
-
-      function draw(time) {
-
-        if (
-          time - lastTime < 100
-        ) {
-          animationFrame =
-            requestAnimationFrame(draw);
-
-          return;
-        }
-
-        lastTime = time;
-
-        direction =
-          nextDirection;
-
-        const head = {
-          x:
-            snake[0].x +
-            direction.x,
-
-          y:
-            snake[0].y +
-            direction.y
-        };
-
-        const collision =
-          head.x < 0 ||
-          head.y < 0 ||
-          head.x >= grid ||
-          head.y >= grid ||
-          snake.some(
-            (part) =>
-              part.x === head.x &&
-              part.y === head.y
-          );
-
-        if (collision) {
-
-          snake = [
-            {x:8,y:8},
-            {x:7,y:8},
-            {x:6,y:8}
-          ];
-
-          direction =
-            {x:1,y:0};
-
-          nextDirection =
-            {x:1,y:0};
-
-          points = 0;
-
-          placeFood();
-        } else {
-
-          snake.unshift(head);
-
-          if (
-            head.x === food.x &&
-            head.y === food.y
-          ) {
-
-            points += 10;
-
-            gameScore(points);
-
-            placeFood();
-
-          } else {
-            snake.pop();
-          }
-        }
-
-        background();
-
-        const cell =
-          Math.min(
-            width(),
-            height()
-          ) / grid;
-
-        const offsetX =
-          (width() - cell * grid) / 2;
-
-        const offsetY =
-          (height() - cell * grid) / 2;
-
-        snake.forEach(
-          (part,index) => {
-
-            ctx.fillStyle =
-              index === 0
-                ? "#ffffff"
-                : "#00b9d0";
-
-            ctx.shadowBlur = 16;
-
-            ctx.shadowColor =
-              "#00f6ff";
-
-            ctx.fillRect(
-              offsetX +
-                part.x * cell + 2,
-
-              offsetY +
-                part.y * cell + 2,
-
-              cell - 4,
-              cell - 4
-            );
-          }
-        );
-
-        ctx.shadowBlur = 0;
-
-        ctx.fillStyle =
-          "#ff3fb4";
-
-        ctx.beginPath();
-
-        ctx.arc(
-          offsetX +
-            (food.x + .5) * cell,
-
-          offsetY +
-            (food.y + .5) * cell,
-
-          cell * .35,
-          0,
-          Math.PI * 2
-        );
-
-        ctx.fill();
-
-        animationFrame =
-          requestAnimationFrame(draw);
+  }
       }
-
-      animationFrame =
-        requestAnimationFrame(draw);
-
-      return;
-    }
-
-    // ========================================================
-    // FLAPPY
-    // ========================================================
-
-    if (id === "flappy") {
-
-      let y = height() / 2;
-      let velocity = 0;
-
-      const gravity = .45;
-
-      let obstacles = [];
-      let frame = 0;
-      let points = 0;
-
-      function draw() {
-
-        background();
-
-        velocity += gravity;
-        y += velocity;
-
-        if (
-          keys.space ||
-          pointer.down
-        ) {
-          velocity = -7;
-          pointer.down = false;
-        }
-
-        frame++;
-
-        if (frame % 85 === 0) {
-
-          const gap = 145;
-
-          const top =
-            60 +
-            Math.random() *
-            (
-              height() -
-              gap -
-              120
-            );
-
-          obstacles.push({
-            x: width() + 20,
-            top,
-            gap,
-            passed: false
-          });
-        }
-
-        obstacles.forEach(
-          (obstacle) => {
-            obstacle.x -= 3.2;
-          }
-        );
-
-        obstacles =
-          obstacles.filter(
-            (obstacle) =>
-              obstacle.x > -80
-          );
-
-        obstacles.forEach(
-          (obstacle) => {
-
-            ctx.fillStyle =
-              "#00d8c8";
-
-            ctx.shadowBlur = 12;
-            ctx.shadowColor =
-              "#00f6ff";
-
-            ctx.fillRect(
-              obstacle.x,
-              0,
-              48,
-              obstacle.top
-            );
-
-            ctx.fillRect(
-              obstacle.x,
-              obstacle.top +
-                obstacle.gap,
-              48,
-              height()
-            );
-          }
-        );
-
-        ctx.shadowBlur = 0;
-
-        ctx.fillStyle =
-          "#ffe45e";
-
-        ctx.beginPath();
-
-        ctx.arc(
-          110,
-          y,
-          17,
-          0,
-          Math.PI * 2
-        );
-
-        ctx.fill();
-
-        ctx.fillStyle =
-          "#ff8a3d";
-
-        ctx.fillRect(
-          124,
-          y - 4,
-          15,
-          8
-        );
-
-        for (const obstacle of obstacles) {
-
-          if (
-            127 >
-              obstacle.x &&
-            93 <
-              obstacle.x + 48 &&
-            (
-              y - 17 <
-                obstacle.top ||
-              y + 17 >
-                obstacle.top +
-                obstacle.gap
-            )
-          ) {
-            y = height() / 2;
-            obstacles = [];
-            points = 0;
-          }
-
-          if (
-            !obstacle.passed &&
-            obstacle.x < 110
-          ) {
-
-            obstacle.passed = true;
-
-            points++;
-
-            gameScore(
-              points * 10
-            );
-          }
-        }
-
-        if (
-          y > height() ||
-          y < 0
-        ) {
-          y = height() / 2;
-          velocity = 0;
-        }
-
-        animationFrame =
-          requestAnimationFrame(draw);
-      }
-
-      animationFrame =
-        requestAnimationFrame(draw);
-
-      return;
-    }
-
-    // ========================================================
-    // CYBER RACING
-    // ========================================================
-
-    if (id === "racing") {
-
-      let lane = 1;
-      let roadOffset = 0;
-      let points = 0;
-      let cars = [];
-      let frame = 0;
-
-      function draw() {
-
-        background();
-
-        const w = width();
-        const h = height();
-
-        const center =
-          w / 2;
-
-        const roadWidth =
-          Math.min(
-            w * .72,
-            620
-          );
-
-        ctx.fillStyle =
-          "#20242c";
-
-        ctx.fillRect(
-          center -
-            roadWidth / 2,
-          0,
-          roadWidth,
-          h
-        );
-
-        // Lane dividers
-        ctx.strokeStyle =
-          "#ffffff";
-
-        ctx.lineWidth = 3;
-
-        ctx.setLineDash([
-          30,
-          25
-        ]);
-
-        for (let i = 1; i < 3; i++) {
-
-          ctx.beginPath();
-
-          ctx.moveTo(
-            center -
-              roadWidth / 2 +
-              i *
-              roadWidth / 3,
-
-            -50 +
-              roadOffset
-          );
-
-          ctx.lineTo(
-            center -
-              roadWidth / 2 +
-              i *
-              roadWidth / 3,
-
-            h +
-              roadOffset
-          );
-
-          ctx.stroke();
-        }
-
-        ctx.setLineDash([]);
-
-        // Curbs
-        for (
-          let y = -40;
-          y < h;
-          y += 65
-        ) {
-
-          ctx.fillStyle =
-            (
-              Math.floor(
-                (y + roadOffset) /
-                65
-              ) % 2
-            )
-              ? "#ffffff"
-              : "#e33";
-
-          ctx.fillRect(
-            center -
-              roadWidth / 2 -
-              12,
-
-            y +
-              roadOffset,
-
-            12,
-            32
-          );
-
-          ctx.fillRect(
-            center +
-              roadWidth / 2,
-
-            y +
-              roadOffset,
-
-            12,
-            32
-          );
-        }
-
-        if (
-          keys.arrowleft ||
-          keys.a
-        ) {
-          lane -= .04;
-        }
-
-        if (
-          keys.arrowright ||
-          keys.d
-        ) {
-          lane += .04;
-        }
-
-        lane =
-          Math.max(
-            0,
-            Math.min(2,lane)
-          );
-
-        frame++;
-
-        if (frame % 80 === 0) {
-
-          cars.push({
-            lane:
-              Math.floor(
-                Math.random() * 3
-              ),
-
-            y: -80
-          });
-        }
-
-        cars.forEach(
-          (car) => {
-            car.y += 5;
-          }
-        );
-
-        cars =
-          cars.filter(
-            (car) =>
-              car.y <
-              h + 100
-          );
-
-        cars.forEach(
-          (car) => {
-
-            ctx.fillStyle =
-              "#ff405e";
-
-            ctx.fillRect(
-              center -
-                roadWidth / 2 +
-                car.lane *
-                roadWidth / 3 +
-                roadWidth / 6 -
-                20,
-
-              car.y,
-
-              40,
-              65
-            );
-          }
-        );
-
-        ctx.fillStyle =
-          "#00f6ff";
-
-        ctx.shadowBlur = 18;
-        ctx.shadowColor =
-          "#00f6ff";
-
-        ctx.fillRect(
-          center -
-            roadWidth / 2 +
-            lane *
-            roadWidth / 3 +
-            roadWidth / 6 -
-            22,
-
-          h - 110,
-
-          44,
-          75
-        );
-
-        ctx.shadowBlur = 0;
-
-        roadOffset =
-          (roadOffset + 4) %
-          65;
-
-        points++;
-
-        gameScore(
-          Math.floor(points / 10)
-        );
-
-        animationFrame =
-          requestAnimationFrame(draw);
-      }
-
-      animationFrame =
-        requestAnimationFrame(draw);
-
-      return;
-    }
 
     // ========================================================
     // FRUIT NINJA
@@ -2527,36 +4101,91 @@
 
       let fruits = [];
       let points = 0;
-      let trail = [];
+      let frame = 0;
+      let slicing = false;
 
       function spawnFruit() {
 
         fruits.push({
           x:
-            30 +
+            60 +
             Math.random() *
-            (width() - 60),
+            (width() - 120),
 
           y:
-            height() + 20,
+            height() + 40,
 
-          velocity:
-            -9 -
-            Math.random() * 5,
+          vx:
+            (Math.random() - .5) * 4,
 
-          radius: 16,
+          vy:
+            -(
+              8 +
+              Math.random() * 4
+            ),
 
-          hue:
-            Math.random() * 360
+          r:
+            20 +
+            Math.random() * 12,
+
+          type:
+            Math.floor(
+              Math.random() * 4
+            )
         });
       }
+
+      function pointerDown() {
+        slicing = true;
+      }
+
+      function pointerUp() {
+        slicing = false;
+      }
+
+      canvas.addEventListener(
+        "pointerdown",
+        pointerDown
+      );
+
+      canvas.addEventListener(
+        "pointerup",
+        pointerUp
+      );
+
+      canvas.addEventListener(
+        "pointerleave",
+        pointerUp
+      );
+
+      state.gameCleanup = () => {
+
+        cleanup();
+
+        canvas.removeEventListener(
+          "pointerdown",
+          pointerDown
+        );
+
+        canvas.removeEventListener(
+          "pointerup",
+          pointerUp
+        );
+
+        canvas.removeEventListener(
+          "pointerleave",
+          pointerUp
+        );
+      };
 
       function draw() {
 
         background();
 
+        frame++;
+
         if (
-          Math.random() < .035
+          frame % 35 === 0
         ) {
           spawnFruit();
         }
@@ -2564,10 +4193,11 @@
         fruits.forEach(
           (fruit) => {
 
-            fruit.velocity += .2;
+            fruit.x += fruit.vx;
 
-            fruit.y +=
-              fruit.velocity;
+            fruit.vy += .25;
+
+            fruit.y += fruit.vy;
           }
         );
 
@@ -2575,866 +4205,339 @@
           fruits.filter(
             (fruit) =>
               fruit.y <
-              height() + 60
+              height() + 80
           );
 
         fruits.forEach(
-          (fruit) => {
+          (fruit,index) => {
+
+            if (
+              slicing &&
+              pointer.x !== undefined &&
+              pointer.y !== undefined
+            ) {
+
+              const distance =
+                Math.hypot(
+                  pointer.x -
+                    fruit.x,
+                  pointer.y -
+                    fruit.y
+                );
+
+              if (
+                distance <
+                fruit.r + 28
+              ) {
+
+                points += 10;
+
+                gameScore(
+                  points
+                );
+
+                fruits.splice(
+                  index,
+                  1
+                );
+
+                return;
+              }
+            }
+
+            const fruitColors = [
+              "#ff3fb4",
+              "#00f6ff",
+              "#ffe45e",
+              "#6dff88"
+            ];
 
             ctx.fillStyle =
-              `hsl(${fruit.hue},90%,60%)`;
+              fruitColors[
+                fruit.type
+              ];
 
             ctx.shadowBlur = 18;
 
             ctx.shadowColor =
-              ctx.fillStyle;
+              fruitColors[
+                fruit.type
+              ];
 
             ctx.beginPath();
 
             ctx.arc(
               fruit.x,
               fruit.y,
-              fruit.radius,
+              fruit.r,
               0,
               Math.PI * 2
             );
 
             ctx.fill();
-          }
-        );
 
-        ctx.shadowBlur = 0;
+            ctx.shadowBlur = 0;
 
-        if (pointer.down) {
+            ctx.fillStyle =
+              "#ffffff";
 
-          trail.push({
-            x: pointer.x,
-            y: pointer.y
-          });
+            ctx.font =
+              "bold 12px Segoe UI";
 
-          fruits =
-            fruits.filter(
-              (fruit) => {
+            ctx.textAlign =
+              "center";
 
-                const distance =
-                  Math.hypot(
-                    fruit.x -
-                      pointer.x,
-
-                    fruit.y -
-                      pointer.y
-                  );
-
-                if (distance < 45) {
-
-                  points += 10;
-
-                  gameScore(points);
-
-                  return false;
-                }
-
-                return true;
-              }
+            ctx.fillText(
+              "●",
+              fruit.x,
+              fruit.y + 4
             );
-        }
 
-        if (trail.length > 12) {
-          trail.shift();
-        }
-
-        ctx.strokeStyle =
-          "#ffffff";
-
-        ctx.lineWidth = 3;
-
-        ctx.beginPath();
-
-        trail.forEach(
-          (point,index) => {
-
-            if (index) {
-              ctx.lineTo(
-                point.x,
-                point.y
-              );
-            } else {
-              ctx.moveTo(
-                point.x,
-                point.y
-              );
-            }
+            ctx.textAlign =
+              "left";
           }
         );
-
-        ctx.stroke();
 
         animationFrame =
-          requestAnimationFrame(draw);
+          requestAnimationFrame(
+            draw
+          );
       }
 
       animationFrame =
-        requestAnimationFrame(draw);
+        requestAnimationFrame(
+          draw
+        );
 
       return;
     }
 
     // ========================================================
-    // PARKOUR RUNNER
+    // ENDLESS RUNNER
     // ========================================================
 
     if (id === "runner") {
 
       let playerY =
-        height() - 70;
+        height() - 100;
 
       let velocity = 0;
 
-      const ground =
-        () => height() - 45;
+      let jumping = false;
 
       let obstacles = [];
-      let points = 0;
+
       let frame = 0;
+
+      let points = 0;
+
+      const ground =
+        height() - 70;
+
+      function jump() {
+
+        if (!jumping) {
+
+          velocity = -11;
+
+          jumping = true;
+        }
+      }
+
+      function keyHandler(event) {
+
+        const key =
+          event.key.toLowerCase();
+
+        if (
+          key === " " ||
+          key === "arrowup" ||
+          key === "w"
+        ) {
+          jump();
+        }
+      }
+
+      function pointerHandler() {
+        jump();
+      }
+
+      window.addEventListener(
+        "keydown",
+        keyHandler
+      );
+
+      canvas.addEventListener(
+        "pointerdown",
+        pointerHandler
+      );
+
+      state.gameCleanup = () => {
+
+        cleanup();
+
+        window.removeEventListener(
+          "keydown",
+          keyHandler
+        );
+
+        canvas.removeEventListener(
+          "pointerdown",
+          pointerHandler
+        );
+      };
 
       function draw() {
 
         background();
 
-        velocity += .65;
+        velocity += .55;
 
         playerY += velocity;
 
         if (
-          playerY >
-          ground()
+          playerY >= ground
         ) {
-          playerY =
-            ground();
+
+          playerY = ground;
 
           velocity = 0;
-        }
 
-        if (
-          (
-            keys.space ||
-            pointer.down
-          ) &&
-          playerY === ground()
-        ) {
-          velocity = -12;
-          pointer.down = false;
+          jumping = false;
         }
 
         frame++;
 
         if (
-          frame % 90 === 0
+          frame % 70 === 0
         ) {
+
           obstacles.push({
             x:
-              width() + 20,
+              width() + 30,
 
-            width:
+            w:
               25 +
               Math.random() * 25,
 
-            height:
+            h:
               35 +
-              Math.random() * 45
+              Math.random() * 50
           });
         }
 
         obstacles.forEach(
           (obstacle) => {
-            obstacle.x -= 5;
+            obstacle.x -= 6;
           }
         );
 
         obstacles =
           obstacles.filter(
             (obstacle) =>
-              obstacle.x > -60
+              obstacle.x >
+              -100
           );
 
-        ctx.fillStyle =
+        // Ground
+        ctx.strokeStyle =
           "#00f6ff";
 
-        ctx.fillRect(
-          70,
-          playerY - 30,
-          30,
-          30
-        );
-
-        ctx.fillStyle =
-          "#ff3fb4";
-
-        obstacles.forEach(
-          (obstacle) => {
-
-            ctx.fillRect(
-              obstacle.x,
-              ground() -
-                obstacle.height,
-
-              obstacle.width,
-              obstacle.height
-            );
-          }
-        );
-
-        if (
-          obstacles.some(
-            (obstacle) =>
-              obstacle.x < 100 &&
-              obstacle.x +
-                obstacle.width >
-                70 &&
-              playerY >
-                ground() -
-                obstacle.height
-          )
-        ) {
-          obstacles = [];
-        }
-
-        ctx.strokeStyle =
-          "#536078";
+        ctx.lineWidth = 3;
 
         ctx.beginPath();
 
         ctx.moveTo(
           0,
-          ground() + 1
+          ground + 35
         );
 
         ctx.lineTo(
           width(),
-          ground() + 1
+          ground + 35
         );
 
         ctx.stroke();
 
+        // Player
+        ctx.fillStyle =
+          "#00f6ff";
+
+        ctx.shadowBlur = 20;
+
+        ctx.shadowColor =
+          "#00f6ff";
+
+        ctx.fillRect(
+          80,
+          playerY - 55,
+          35,
+          55
+        );
+
+        ctx.shadowBlur = 0;
+
+        // Obstacles
+        obstacles.forEach(
+          (obstacle) => {
+
+            ctx.fillStyle =
+              "#ff3fb4";
+
+            ctx.fillRect(
+              obstacle.x,
+              ground +
+                35 -
+                obstacle.h,
+
+              obstacle.w,
+              obstacle.h
+            );
+
+            if (
+              80 + 35 >
+                obstacle.x &&
+              80 <
+                obstacle.x +
+                obstacle.w &&
+              playerY >
+                ground +
+                35 -
+                obstacle.h &&
+              playerY - 55 <
+                ground + 35
+            ) {
+
+              points = 0;
+
+              obstacles = [];
+
+              playerY =
+                ground;
+
+              velocity = 0;
+            }
+          }
+        );
+
         points++;
 
         gameScore(
-          Math.floor(points / 10)
+          Math.floor(
+            points / 10
+          )
         );
 
         animationFrame =
-          requestAnimationFrame(draw);
+          requestAnimationFrame(
+            draw
+          );
       }
 
       animationFrame =
-        requestAnimationFrame(draw);
-
-      return;
-    }
-
-    // ========================================================
-    // SPACE INVADERS
-    // ========================================================
-
-    if (id === "invaders") {
-
-      let ships = [];
-      let bullets = [];
-      let player =
-        width() / 2;
-
-      let points = 0;
-      let frame = 0;
-
-      for (
-        let row = 0;
-        row < 3;
-        row++
-      ) {
-
-        for (
-          let col = 0;
-          col < 8;
-          col++
-        ) {
-
-          ships.push({
-            x:
-              100 +
-              col * 55,
-
-            y:
-              60 +
-              row * 38
-          });
-        }
-      }
-
-      function draw() {
-
-        background();
-
-        if (
-          keys.arrowleft ||
-          keys.a
-        ) {
-          player -= 6;
-        }
-
-        if (
-          keys.arrowright ||
-          keys.d
-        ) {
-          player += 6;
-        }
-
-        player =
-          Math.max(
-            20,
-            Math.min(
-              width() - 20,
-              player
-            )
-          );
-
-        if (
-          keys.space &&
-          frame % 12 === 0
-        ) {
-
-          bullets.push({
-            x: player,
-            y: height() - 55
-          });
-        }
-
-        bullets.forEach(
-          (bullet) => {
-            bullet.y -= 8;
-          }
+        requestAnimationFrame(
+          draw
         );
-
-        bullets =
-          bullets.filter(
-            (bullet) =>
-              bullet.y > 0
-          );
-
-        ships =
-          ships.filter(
-            (ship) => {
-
-              for (
-                const bullet of bullets
-              ) {
-
-                if (
-                  Math.hypot(
-                    bullet.x -
-                      ship.x,
-
-                    bullet.y -
-                      ship.y
-                  ) < 18
-                ) {
-
-                  bullet.hit = true;
-
-                  points += 10;
-
-                  gameScore(points);
-
-                  return false;
-                }
-              }
-
-              return true;
-            }
-          );
-
-        bullets =
-          bullets.filter(
-            (bullet) =>
-              !bullet.hit
-          );
-
-        ctx.fillStyle =
-          "#00f6ff";
-
-        ctx.fillRect(
-          player - 22,
-          height() - 40,
-          44,
-          12
-        );
-
-        ctx.fillStyle =
-          "#ff3fb4";
-
-        ships.forEach(
-          (ship) => {
-
-            ctx.beginPath();
-
-            ctx.arc(
-              ship.x,
-              ship.y,
-              12,
-              0,
-              Math.PI * 2
-            );
-
-            ctx.fill();
-          }
-        );
-
-        ctx.fillStyle =
-          "#ffffff";
-
-        bullets.forEach(
-          (bullet) => {
-
-            ctx.fillRect(
-              bullet.x - 2,
-              bullet.y,
-              4,
-              10
-            );
-          }
-        );
-
-        frame++;
-
-        animationFrame =
-          requestAnimationFrame(draw);
-      }
-
-      animationFrame =
-        requestAnimationFrame(draw);
-
-      return;
-    }
-
-    // ========================================================
-    // BREAKOUT
-    // ========================================================
-
-    if (id === "breakout") {
-
-      let paddleX =
-        width() / 2;
-
-      let ballX =
-        width() / 2;
-
-      let ballY =
-        height() - 70;
-
-      let velocityX = 4;
-      let velocityY = -4;
-
-      let points = 0;
-
-      const bricks = [];
-
-      for (
-        let row = 0;
-        row < 5;
-        row++
-      ) {
-
-        for (
-          let column = 0;
-          column < 10;
-          column++
-        ) {
-
-          bricks.push({
-            x:
-              20 +
-              column *
-              ((width() - 40) / 10),
-
-            y:
-              35 +
-              row * 24,
-
-            width:
-              (width() - 55) / 10,
-
-            height: 17,
-
-            active: true
-          });
-        }
-      }
-
-      function draw() {
-
-        background();
-
-        if (
-          keys.arrowleft ||
-          keys.a
-        ) {
-          paddleX -= 7;
-        }
-
-        if (
-          keys.arrowright ||
-          keys.d
-        ) {
-          paddleX += 7;
-        }
-
-        paddleX =
-          Math.max(
-            50,
-            Math.min(
-              width() - 50,
-              paddleX
-            )
-          );
-
-        ballX += velocityX;
-        ballY += velocityY;
-
-        if (
-          ballX < 8 ||
-          ballX >
-            width() - 8
-        ) {
-          velocityX *= -1;
-        }
-
-        if (ballY < 8) {
-          velocityY *= -1;
-        }
-
-        if (
-          ballY >
-            height() - 45 &&
-          ballX >
-            paddleX - 50 &&
-          ballX <
-            paddleX + 50
-        ) {
-          velocityY =
-            -Math.abs(
-              velocityY
-            );
-        }
-
-        if (
-          ballY >
-            height() + 30
-        ) {
-
-          ballX =
-            paddleX;
-
-          ballY =
-            height() - 70;
-
-          velocityY = -4;
-        }
-
-        bricks.forEach(
-          (brick) => {
-
-            if (
-              brick.active &&
-              ballX > brick.x &&
-              ballX <
-                brick.x +
-                brick.width &&
-              ballY > brick.y &&
-              ballY <
-                brick.y +
-                brick.height
-            ) {
-
-              brick.active =
-                false;
-
-              velocityY *= -1;
-
-              points += 10;
-
-              gameScore(points);
-            }
-          }
-        );
-
-        ctx.fillStyle =
-          "#00f6ff";
-
-        ctx.fillRect(
-          paddleX - 50,
-          height() - 25,
-          100,
-          10
-        );
-
-        bricks.forEach(
-          (brick) => {
-
-            if (!brick.active)
-              return;
-
-            ctx.fillStyle =
-              "#9b5cff";
-
-            ctx.fillRect(
-              brick.x,
-              brick.y,
-              brick.width,
-              brick.height
-            );
-          }
-        );
-
-        ctx.fillStyle =
-          "#ffffff";
-
-        ctx.beginPath();
-
-        ctx.arc(
-          ballX,
-          ballY,
-          7,
-          0,
-          Math.PI * 2
-        );
-
-        ctx.fill();
-
-        animationFrame =
-          requestAnimationFrame(draw);
-      }
-
-      animationFrame =
-        requestAnimationFrame(draw);
-
-      return;
-    }
-
-    // ========================================================
-    // PACMAN CYBER RUN
-    // ========================================================
-
-    if (id === "pacman") {
-
-      const player = {
-        x: width() / 2,
-        y: height() / 2
-      };
-
-      let dots = [];
-
-      for (
-        let i = 0;
-        i < 55;
-        i++
-      ) {
-
-        dots.push({
-          x:
-            30 +
-            Math.random() *
-            (width() - 60),
-
-          y:
-            30 +
-            Math.random() *
-            (height() - 60)
-        });
-      }
-
-      const ghosts = [
-        {
-          x: 80,
-          y: 80
-        },
-        {
-          x: width() - 80,
-          y: 80
-        },
-        {
-          x: width() - 80,
-          y: height() - 80
-        }
-      ];
-
-      let points = 0;
-
-      function draw() {
-
-        background();
-
-        if (keys.arrowup)
-          player.y -= 4;
-
-        if (keys.arrowdown)
-          player.y += 4;
-
-        if (keys.arrowleft)
-          player.x -= 4;
-
-        if (keys.arrowright)
-          player.x += 4;
-
-        player.x =
-          (player.x + width()) %
-          width();
-
-        player.y =
-          (player.y + height()) %
-          height();
-
-        ghosts.forEach(
-          (ghost) => {
-
-            ghost.x +=
-              (
-                player.x >
-                ghost.x
-                  ? 1
-                  : -1
-              ) * 1.7;
-
-            ghost.y +=
-              (
-                player.y >
-                ghost.y
-                  ? 1
-                  : -1
-              ) * 1.7;
-          }
-        );
-
-        dots =
-          dots.filter(
-            (dot) => {
-
-              if (
-                Math.hypot(
-                  dot.x -
-                    player.x,
-
-                  dot.y -
-                    player.y
-                ) < 15
-              ) {
-
-                points += 10;
-
-                gameScore(points);
-
-                return false;
-              }
-
-              return true;
-            }
-          );
-
-        ctx.fillStyle =
-          "#ffe45e";
-
-        ctx.beginPath();
-
-        ctx.arc(
-          player.x,
-          player.y,
-          15,
-          .25,
-          Math.PI * 1.75
-        );
-
-        ctx.lineTo(
-          player.x,
-          player.y
-        );
-
-        ctx.fill();
-
-        ctx.fillStyle =
-          "#ffffff";
-
-        dots.forEach(
-          (dot) => {
-
-            ctx.beginPath();
-
-            ctx.arc(
-              dot.x,
-              dot.y,
-              3,
-              0,
-              Math.PI * 2
-            );
-
-            ctx.fill();
-          }
-        );
-
-        const colors = [
-          "#ff3fb4",
-          "#00f6ff",
-          "#9b5cff"
-        ];
-
-        ghosts.forEach(
-          (ghost,index) => {
-
-            ctx.fillStyle =
-              colors[index];
-
-            ctx.beginPath();
-
-            ctx.arc(
-              ghost.x,
-              ghost.y,
-              14,
-              Math.PI,
-              0
-            );
-
-            ctx.lineTo(
-              ghost.x + 14,
-              ghost.y + 14
-            );
-
-            ctx.lineTo(
-              ghost.x + 7,
-              ghost.y + 8
-            );
-
-            ctx.lineTo(
-              ghost.x,
-              ghost.y + 14
-            );
-
-            ctx.lineTo(
-              ghost.x - 7,
-              ghost.y + 8
-            );
-
-            ctx.lineTo(
-              ghost.x - 14,
-              ghost.y + 14
-            );
-
-            ctx.fill();
-          }
-        );
-
-        animationFrame =
-          requestAnimationFrame(draw);
-      }
-
-      animationFrame =
-        requestAnimationFrame(draw);
 
       return;
     }
@@ -3445,74 +4548,111 @@
 
     if (id === "tetris") {
 
-      const columns = 10;
+      const cols = 10;
       const rows = 20;
 
-      let board =
+      const board =
         Array.from(
           {length: rows},
           () =>
-            Array(columns).fill(0)
+            Array(cols).fill(0)
         );
 
-      const shapes = [
+      const pieces = [
         [[1,1,1,1]],
-        [[1,1],[1,1]],
-        [[1,1,0],[0,1,1]],
-        [[1,0,0],[1,1,1]]
+        [
+          [1,1],
+          [1,1]
+        ],
+        [
+          [0,1,0],
+          [1,1,1]
+        ],
+        [
+          [1,0,0],
+          [1,1,1]
+        ],
+        [
+          [0,0,1],
+          [1,1,1]
+        ]
       ];
 
-      let piece;
+      let piece =
+        null;
+
+      let pieceX = 3;
+      let pieceY = 0;
 
       let points = 0;
-      let lastDrop = 0;
+
+      let fallTimer = 0;
 
       function newPiece() {
 
-        piece = {
-          x:
+        piece =
+          pieces[
             Math.floor(
-              columns / 2
-            ) - 1,
+              Math.random() *
+              pieces.length
+            )
+          ];
 
-          y: 0,
+        pieceX = 3;
 
-          shape:
-            shapes[
-              Math.floor(
-                Math.random() *
-                shapes.length
-              )
-            ]
-        };
+        pieceY = 0;
       }
 
       function collision(
-        px = piece.x,
-        py = piece.y,
-        shape = piece.shape
+        px,
+        py,
+        shape
       ) {
 
-        return shape.some(
-          (row,y) =>
-            row.some(
-              (value,x) =>
-                value &&
-                (
-                  py + y >= rows ||
-                  px + x < 0 ||
-                  px + x >= columns ||
-                  board[py + y]?.[
-                    px + x
-                  ]
-                )
-            )
-        );
+        for (
+          let y = 0;
+          y < shape.length;
+          y++
+        ) {
+
+          for (
+            let x = 0;
+            x < shape[y].length;
+            x++
+          ) {
+
+            if (!shape[y][x])
+              continue;
+
+            const bx =
+              px + x;
+
+            const by =
+              py + y;
+
+            if (
+              bx < 0 ||
+              bx >= cols ||
+              by >= rows
+            ) {
+              return true;
+            }
+
+            if (
+              by >= 0 &&
+              board[by][bx]
+            ) {
+              return true;
+            }
+          }
+        }
+
+        return false;
       }
 
-      function mergePiece() {
+      function merge() {
 
-        piece.shape.forEach(
+        piece.forEach(
           (row,y) => {
 
             row.forEach(
@@ -3520,299 +4660,544 @@
 
                 if (value) {
 
-                  board[
-                    piece.y + y
-                  ][
-                    piece.x + x
-                  ] = 1;
+                  const by =
+                    pieceY + y;
+
+                  const bx =
+                    pieceX + x;
+
+                  if (
+                    by >= 0 &&
+                    by < rows &&
+                    bx >= 0 &&
+                    bx < cols
+                  ) {
+                    board[by][bx] =
+                      1;
+                  }
                 }
               }
             );
           }
         );
+      }
 
-        board =
-          board.filter(
-            (row) =>
-              row.some(
-                (value) =>
-                  !value
-              )
-          );
+      function clearLines() {
 
-        while (
-          board.length <
-          rows
+        let cleared = 0;
+
+        for (
+          let y = rows - 1;
+          y >= 0;
+          y--
         ) {
-          board.unshift(
-            Array(columns).fill(0)
-          );
+
+          if (
+            board[y].every(Boolean)
+          ) {
+
+            board.splice(
+              y,
+              1
+            );
+
+            board.unshift(
+              Array(cols).fill(0)
+            );
+
+            cleared++;
+
+            y++;
+          }
         }
 
-        points += 100;
+        if (cleared) {
 
-        gameScore(points);
+          points +=
+            cleared *
+            cleared *
+            100;
 
-        newPiece();
+          gameScore(
+            points
+          );
+        }
       }
 
       function rotate() {
 
         const rotated =
-          piece.shape[0].map(
+          piece[0].map(
             (_,index) =>
-              piece.shape
-                .map(
-                  (row) =>
-                    row[index]
-                )
-                .reverse()
+              piece.map(
+                row =>
+                  row[index]
+              ).reverse()
           );
 
         if (
           !collision(
-            piece.x,
-            piece.y,
+            pieceX,
+            pieceY,
             rotated
           )
         ) {
-          piece.shape =
-            rotated;
+          piece = rotated;
         }
       }
 
-      const controls =
-        (event) => {
+      function move(dx) {
+
+        if (
+          !collision(
+            pieceX + dx,
+            pieceY,
+            piece
+          )
+        ) {
+          pieceX += dx;
+        }
+      }
+
+      function drop() {
+
+        if (
+          !collision(
+            pieceX,
+            pieceY + 1,
+            piece
+          )
+        ) {
+
+          pieceY++;
+
+        } else {
+
+          merge();
+
+          clearLines();
+
+          newPiece();
 
           if (
-            event.key ===
-            "ArrowLeft"
+            collision(
+              pieceX,
+              pieceY,
+              piece
+            )
           ) {
 
-            if (
-              !collision(
-                piece.x - 1
-              )
-            ) {
-              piece.x--;
-            }
+            board.forEach(
+              (row) =>
+                row.fill(0)
+            );
+
+            points = 0;
+
+            gameScore(0);
           }
+        }
+      }
 
-          if (
-            event.key ===
-            "ArrowRight"
-          ) {
+      function keyHandler(event) {
 
-            if (
-              !collision(
-                piece.x + 1
-              )
-            ) {
-              piece.x++;
-            }
-          }
+        const key =
+          event.key.toLowerCase();
 
-          if (
-            event.key ===
-            "ArrowDown"
-          ) {
+        if (
+          key === "arrowleft" ||
+          key === "a"
+        ) {
+          move(-1);
+        }
 
-            if (
-              !collision(
-                piece.x,
-                piece.y + 1
-              )
-            ) {
-              piece.y++;
-            }
-          }
+        if (
+          key === "arrowright" ||
+          key === "d"
+        ) {
+          move(1);
+        }
 
-          if (
-            event.key ===
-            "ArrowUp"
-          ) {
-            rotate();
-          }
-        };
+        if (
+          key === "arrowdown" ||
+          key === "s"
+        ) {
+          drop();
+        }
+
+        if (
+          key === "arrowup" ||
+          key === "w"
+        ) {
+          rotate();
+        }
+      }
 
       window.addEventListener(
         "keydown",
-        controls
+        keyHandler
       );
 
+      newPiece();
+
       state.gameCleanup = () => {
+
         cleanup();
 
         window.removeEventListener(
           "keydown",
-          controls
+          keyHandler
         );
       };
 
       function draw(time) {
 
         if (
-          time -
-          lastDrop >
-          450
+          time - fallTimer >
+          500
         ) {
 
-          if (
-            !collision(
-              piece.x,
-              piece.y + 1
-            )
-          ) {
-            piece.y++;
-          } else {
-            mergePiece();
-          }
+          drop();
 
-          lastDrop = time;
+          fallTimer = time;
         }
 
         background();
 
-        const cellSize =
+        const cell =
           Math.min(
-            (width() - 30) /
-              columns,
-
-            (height() - 30) /
-              rows
+            width() / cols,
+            height() / rows
           );
 
-        const offsetX =
+        const ox =
           (
             width() -
-            cellSize *
-              columns
+            cell * cols
           ) / 2;
 
-        const offsetY =
+        const oy =
           (
             height() -
-            cellSize *
-              rows
+            cell * rows
           ) / 2;
 
-        board.forEach(
-          (row,y) => {
+        for (
+          let y = 0;
+          y < rows;
+          y++
+        ) {
 
-            row.forEach(
-              (value,x) => {
+          for (
+            let x = 0;
+            x < cols;
+            x++
+          ) {
 
-                if (!value)
-                  return;
+            if (
+              board[y][x]
+            ) {
 
-                ctx.fillStyle =
-                  "#9b5cff";
+              ctx.fillStyle =
+                "#00f6ff";
 
-                ctx.fillRect(
-                  offsetX +
-                    x *
-                    cellSize +
-                    1,
+              ctx.fillRect(
+                ox +
+                  x * cell +
+                  2,
 
-                  offsetY +
-                    y *
-                    cellSize +
-                    1,
+                oy +
+                  y * cell +
+                  2,
 
-                  cellSize - 2,
-                  cellSize - 2
-                );
-              }
-            );
+                cell - 4,
+                cell - 4
+              );
+            }
           }
-        );
+        }
 
-        piece.shape.forEach(
-          (row,y) => {
+        if (piece) {
 
-            row.forEach(
-              (value,x) => {
+          piece.forEach(
+            (row,y) => {
 
-                if (!value)
-                  return;
+              row.forEach(
+                (value,x) => {
 
-                ctx.fillStyle =
-                  "#00f6ff";
+                  if (!value)
+                    return;
 
-                ctx.fillRect(
-                  offsetX +
-                    (piece.x + x) *
-                    cellSize +
-                    1,
+                  ctx.fillStyle =
+                    "#ff3fb4";
 
-                  offsetY +
-                    (piece.y + y) *
-                    cellSize +
-                    1,
+                  ctx.fillRect(
+                    ox +
+                      (
+                        pieceX +
+                        x
+                      ) * cell +
+                      2,
 
-                  cellSize - 2,
-                  cellSize - 2
-                );
-              }
-            );
-          }
-        );
+                    oy +
+                      (
+                        pieceY +
+                        y
+                      ) * cell +
+                      2,
+
+                    cell - 4,
+                    cell - 4
+                  );
+                }
+              );
+            }
+          );
+        }
 
         animationFrame =
-          requestAnimationFrame(draw);
+          requestAnimationFrame(
+            draw
+          );
       }
 
-      newPiece();
-
       animationFrame =
-        requestAnimationFrame(draw);
+        requestAnimationFrame(
+          draw
+        );
 
       return;
     }
-  }
 
-  // ============================================================
-  // GAME MODAL
-  // ============================================================
+    // ========================================================
+    // SPACE INVADERS
+    // ========================================================
 
-  $("#restartGame")?.addEventListener(
-    "click",
-    () => {
+    if (id === "invaders") {
 
-      if (state.game) {
-        launchGame(
-          state.game
-        );
+      let playerX =
+        width() / 2;
+
+      let bullets = [];
+
+      let enemies = [];
+
+      let points = 0;
+
+      let frame = 0;
+
+      for (
+        let row = 0;
+        row < 4;
+        row++
+      ) {
+
+        for (
+          let col = 0;
+          col < 8;
+          col++
+        ) {
+
+          enemies.push({
+            x:
+              80 +
+              col * 70,
+
+            y:
+              70 +
+              row * 50,
+
+            alive: true
+          });
+        }
       }
-    }
-  );
 
-  $$("[data-close-game]")
-    .forEach((button) => {
+      function keyHandler(event) {
 
-      button.onclick = () => {
-
-        closeModal(
-          "#gameModal"
-        );
+        const key =
+          event.key.toLowerCase();
 
         if (
-          state.gameCleanup
+          key === "arrowleft" ||
+          key === "a"
         ) {
-          state.gameCleanup();
+          playerX -= 18;
         }
+
+        if (
+          key === "arrowright" ||
+          key === "d"
+        ) {
+          playerX += 18;
+        }
+
+        if (
+          key === " " ||
+          key === "spacebar"
+        ) {
+
+          bullets.push({
+            x: playerX,
+            y: height() - 90
+          });
+        }
+
+        playerX =
+          clamp(
+            playerX,
+            30,
+            width() - 30
+          );
+      }
+
+      window.addEventListener(
+        "keydown",
+        keyHandler
+      );
+
+      state.gameCleanup = () => {
+
+        cleanup();
+
+        window.removeEventListener(
+          "keydown",
+          keyHandler
+        );
       };
 
-    });
+      function draw() {
 
-  // ============================================================
-  // INITIALIZE
-  // ============================================================
+        background();
 
-  setupAuthentication();
-  setupNavigation();
-  setupHome();
-  setupMobileGameControls();
-  boot();
+        frame++;
 
-})();
+        if (
+          frame % 70 === 0
+        ) {
+
+          enemies.forEach(
+            (enemy) => {
+
+              if (enemy.alive) {
+                enemy.y += 12;
+              }
+
+            }
+          );
+        }
+
+        bullets.forEach(
+          (bullet) => {
+            bullet.y -= 9;
+          }
+        );
+
+        bullets =
+          bullets.filter(
+            (bullet) =>
+              bullet.y > -20
+          );
+
+        bullets.forEach(
+          (bullet,index) => {
+
+            for (
+              const enemy of enemies
+            ) {
+
+              if (!enemy.alive)
+                continue;
+
+              if (
+                Math.abs(
+                  bullet.x -
+                  enemy.x
+                ) < 25 &&
+                Math.abs(
+                  bullet.y -
+                  enemy.y
+                ) < 20
+              ) {
+
+                enemy.alive = false;
+
+                points += 10;
+
+                gameScore(
+                  points
+                );
+
+                bullets.splice(
+                  index,
+                  1
+                );
+
+                break;
+              }
+            }
+          }
+        );
+
+        enemies.forEach(
+          (enemy) => {
+
+            if (!enemy.alive)
+              return;
+
+            ctx.fillStyle =
+              "#ff3fb4";
+
+            ctx.shadowBlur = 14;
+
+            ctx.shadowColor =
+              "#ff3fb4";
+
+            ctx.fillRect(
+              enemy.x - 18,
+              enemy.y - 12,
+              36,
+              24
+            );
+
+            ctx.shadowBlur = 0;
+          }
+        );
+
+        bullets.forEach(
+          (bullet) => {
+
+            ctx.fillStyle =
+              "#ffe45e";
+
+            ctx.fillRect(
+              bullet.x - 3,
+              bullet.y - 10,
+              6,
+              20
+            );
+          }
+        );
+
+        ctx.fillStyle =
+          "#00f6ff";
+
+        ctx.fillRect(
+          playerX - 25,
+          height() - 55,
+          50,
+          20
+        );
+
+        animationFrame =
+          requestAnimationFrame(
+            draw
+          );
+      }
+
+      animationFrame =
+        requestAnimationFrame(
+          draw
+        );
+
+      return;
+    }
